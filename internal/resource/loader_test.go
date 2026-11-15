@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -82,5 +83,41 @@ func TestRemoteGuards(t *testing.T) {
 	b, typ, err := open.Fetch(srv.URL + "/a.css")
 	if err != nil || string(b) != "body{}" || typ != "text/css" {
 		t.Errorf("remote fetch: %q %q %v", b, typ, err)
+	}
+}
+
+func TestLocalSymlinkCannotEscape(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("secret"), 0o644)
+	if err := os.Symlink(filepath.Join(dir, "secret.txt"), filepath.Join(root, "link.txt")); err != nil {
+		t.Skip("symbolic links not available:", err)
+	}
+	l := &Loader{BaseDir: root}
+	if b, _, err := l.Fetch("local:/link.txt"); err == nil {
+		t.Errorf("a link out of the base directory was followed: %q", b)
+	}
+	for _, p := range []string{"local:/../secret.txt", "local:/" + filepath.ToSlash(filepath.Join(dir, "secret.txt"))} {
+		if _, _, err := l.Fetch(p); err == nil {
+			t.Errorf("%s was readable", p)
+		}
+	}
+}
+
+func TestPrivateAddresses(t *testing.T) {
+	for _, s := range []string{
+		"127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "0.0.0.0", "0.1.2.3",
+		"100.100.100.200", "198.18.0.1", "255.255.255.255", "::1", "fc00::1", "fe80::1", "::ffff:127.0.0.1",
+		"64:ff9b::a00:1", "2002:7f00:1::", "fec0::1",
+	} {
+		if !privateIP(net.ParseIP(s)) {
+			t.Errorf("%s should be refused", s)
+		}
+	}
+	for _, s := range []string{"8.8.8.8", "140.82.112.3", "2606:4700::1111", "64:ff9b::808:808"} {
+		if privateIP(net.ParseIP(s)) {
+			t.Errorf("%s is public", s)
+		}
 	}
 }

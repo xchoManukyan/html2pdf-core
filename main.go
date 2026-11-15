@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -52,6 +53,8 @@ func main() {
 	signLocation := flag.String("sign-location", "", "signature: location")
 	signContact := flag.String("sign-contact", "", "signature: contact information")
 	signName := flag.String("sign-name", "", "signature: signer name (default: the certificate's common name)")
+	signToken := flag.String("sign-token", os.Getenv("HTML2PDF_SIGN_TOKEN"), "server: secret that signing requests must send (Authorization: Bearer TOKEN); required with -sign-cert (default: HTML2PDF_SIGN_TOKEN)")
+	maxJobs := flag.Int("max-jobs", runtime.NumCPU(), "server: conversions that run at the same time; further requests wait")
 	docName := flag.String("doc", "", "CLI with -in -: the document's path inside -root, for relative links (default document.html)")
 	jsonOut := flag.Bool("json", false, "CLI: print a JSON report (file, size, time, CSS libraries, missing resources, or the error) for programs")
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -87,12 +90,18 @@ func main() {
 		os.Exit(runCLI(*in, *out, *root, *docName, *jsonOut, req))
 	}
 
+	if signer != nil && *signToken == "" {
+		// without a secret, anyone who can reach the server could have documents signed
+		fmt.Fprintln(os.Stderr, "a server that signs needs -sign-token (or HTML2PDF_SIGN_TOKEN): signing requests must send it as \"Authorization: Bearer TOKEN\"")
+		os.Exit(2)
+	}
+
 	// Index installed fonts in the background so the first request is fast.
 	go fonts.System()
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           server.New(server.Config{AllowRemote: *allowRemote, Signer: signer}),
+		Handler:           server.New(server.Config{AllowRemote: *allowRemote, Signer: signer, SignToken: *signToken, MaxJobs: *maxJobs}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      120 * time.Second,

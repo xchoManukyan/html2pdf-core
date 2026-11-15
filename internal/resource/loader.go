@@ -256,23 +256,20 @@ func (l *Loader) local(p string) ([]byte, error) {
 	if l.BaseDir == "" {
 		return nil, ErrNotFound
 	}
-	root, err := filepath.Abs(l.BaseDir)
+	// os.Root resolves the path inside the base folder at the operating-system
+	// level: "..", absolute paths and symbolic links cannot leave it, not even
+	// when a link is swapped while the file is opened, and Windows device names
+	// (CON, NUL, COM1) are refused.
+	root, err := os.OpenRoot(l.BaseDir)
 	if err != nil {
-		return nil, err
+		return nil, ErrNotFound
 	}
-	full := filepath.Join(root, filepath.FromSlash(p))
-	if rel, err := filepath.Rel(root, full); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, ErrOutsideRoot
-	}
-	// resolve symlinks so a link cannot escape the root either
-	if real, err := filepath.EvalSymlinks(full); err == nil {
-		realRoot, _ := filepath.EvalSymlinks(root)
-		if rel, err := filepath.Rel(realRoot, real); err != nil || strings.HasPrefix(rel, "..") {
+	defer root.Close()
+	f, err := root.Open(filepath.FromSlash(strings.TrimPrefix(p, "/")))
+	if err != nil {
+		if strings.Contains(err.Error(), "escapes") {
 			return nil, ErrOutsideRoot
 		}
-	}
-	f, err := os.Open(full)
-	if err != nil {
 		return nil, ErrNotFound
 	}
 	defer f.Close()
@@ -287,10 +284,50 @@ func (l *Loader) local(p string) ([]byte, error) {
 // privateIP reports addresses that must not be reached from a server
 // fetching user-supplied URLs.
 func privateIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() ||
-		ip.Equal(net.ParseIP("169.254.169.254")) // cloud metadata
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
+		return true
+	}
+	for _, n := range blockedNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	// IPv6 addresses that carry an IPv4 address (NAT64, 6to4) are checked by it
+	if len(ip) == net.IPv6len && ip.To4() == nil {
+		switch {
+		case nat64.Contains(ip):
+			return privateIP(net.IP(ip[12:16]))
+		case sixToFour.Contains(ip):
+			return privateIP(net.IP(ip[2:6]))
+		}
+	}
+	return false
 }
+
+// Ranges beyond the private and link-local ones that reach internal services.
+var blockedNets = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, cidr := range []string{
+		"0.0.0.0/8",      // "this network": connects to the local machine on Linux
+		"100.64.0.0/10",  // carrier-grade NAT; cloud metadata (Alibaba 100.100.100.200)
+		"192.0.0.0/24",   // IETF protocol assignments
+		"198.18.0.0/15",  // benchmarking
+		"240.0.0.0/4",    // reserved, and broadcast
+		"64:ff9b:1::/48", // local-use NAT64
+		"2001:db8::/32",  // documentation
+		"fec0::/10",      // deprecated site-local
+	} {
+		_, n, _ := net.ParseCIDR(cidr)
+		out = append(out, n)
+	}
+	return out
+}()
+
+var (
+	_, nat64, _     = net.ParseCIDR("64:ff9b::/96")
+	_, sixToFour, _ = net.ParseCIDR("2002::/16")
+)
 
 func (l *Loader) remote(raw string) ([]byte, string, error) {
 	if !l.AllowRemote {

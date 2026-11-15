@@ -161,6 +161,7 @@ func DecodeWOFF(data []byte) ([]byte, error) {
 	}
 	numTables := int(be.Uint16(data[12:]))
 	tables := map[string][]byte{}
+	total := 0 // decompressed bytes so far, bounded like WOFF2 (a guard against zlib bombs)
 	for i := 0; i < numTables; i++ {
 		p := 44 + i*20
 		if p+20 > len(data) {
@@ -170,6 +171,9 @@ func DecodeWOFF(data []byte) ([]byte, error) {
 		off, compLen, origLen := be.Uint32(data[p+4:]), be.Uint32(data[p+8:]), be.Uint32(data[p+12:])
 		if uint64(off)+uint64(compLen) > uint64(len(data)) {
 			return nil, errTruncated
+		}
+		if total += int(origLen); total > maxFontSize {
+			return nil, errors.New("ttf: WOFF font is too large")
 		}
 		raw := data[off : off+compLen]
 		if compLen < origLen {
@@ -187,3 +191,7 @@ func DecodeWOFF(data []byte) ([]byte, error) {
 	}
 	return writeSfnt(tables), nil
 }
+
+// maxFontSize bounds a decompressed WOFF font (64 MB, like the Brotli limit
+// for WOFF2): the size a file declares is not trusted beyond it.
+const maxFontSize = 64 << 20

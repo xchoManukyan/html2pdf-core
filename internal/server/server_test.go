@@ -2,16 +2,25 @@ package server
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"image"
 	"image/png"
 	"io"
+	"math/big"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 func pngFile() []byte {
@@ -157,5 +166,50 @@ func TestCSSLibField(t *testing.T) {
 	}
 	if got := post("none"); got != "" {
 		t.Errorf("none: X-CSS-Lib = %q", got)
+	}
+}
+
+func TestSigningNeedsToken(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Test"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+	cert, _ := x509.ParseCertificate(der)
+	h := New(Config{Signer: &pdf.Signature{Certs: []*x509.Certificate{cert}, Key: key}, SignToken: "s3cret", MaxJobs: 1})
+	send := func(auth string) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		mw.WriteField("html", "<p>contract</p>")
+		mw.WriteField("sign", "true")
+		mw.Close()
+		req := httptest.NewRequest("POST", "/api/convert", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, auth := range []string{"", "Bearer wrong", "s3cret", "Bearer "} {
+		if rec := send(auth); rec.Code != http.StatusUnauthorized {
+			t.Errorf("Authorization %q: status %d, want 401", auth, rec.Code)
+		}
+	}
+	rec := send("Bearer s3cret")
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("/SubFilter /ETSI.CAdES.detached")) {
+		t.Fatalf("with the token: status %d", rec.Code)
+	}
+	// unsigned conversions need no token
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("html", "<p>x</p>")
+	mw.Close()
+	req := httptest.NewRequest("POST", "/api/convert", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	plain := httptest.NewRecorder()
+	h.ServeHTTP(plain, req)
+	if plain.Code != http.StatusOK {
+		t.Errorf("unsigned conversion: status %d", plain.Code)
 	}
 }

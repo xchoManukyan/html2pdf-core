@@ -3,6 +3,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -33,14 +35,25 @@ type Config struct {
 	// (sign=true). The key stays on the server; clients only choose the
 	// reason and location.
 	Signer *pdf.Signature
+	// SignToken must be sent by signing requests as "Authorization: Bearer
+	// TOKEN", so only your applications can have documents signed.
+	SignToken string
+	// MaxJobs limits the conversions running at the same time (0: the number
+	// of CPUs); further requests wait for a free slot.
+	MaxJobs int
 }
 
 // New returns the HTTP handler of the application.
 func New(cfg Config) http.Handler {
 	store := newResults()
+	jobs := cfg.MaxJobs
+	if jobs <= 0 {
+		jobs = runtime.NumCPU()
+	}
+	slots := make(chan struct{}, jobs)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", index)
-	mux.HandleFunc("POST /api/convert", func(w http.ResponseWriter, r *http.Request) { convert(w, r, cfg, store) })
+	mux.HandleFunc("POST /api/convert", func(w http.ResponseWriter, r *http.Request) { convert(w, r, cfg, store, slots) })
 	mux.HandleFunc("GET /api/result/{id}/{name}", func(w http.ResponseWriter, r *http.Request) { result(w, r, store) })
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -59,7 +72,7 @@ func index(w http.ResponseWriter, _ *http.Request) {
 	w.Write(page)
 }
 
-func convert(w http.ResponseWriter, r *http.Request, cfg Config, store *results) {
+func convert(w http.ResponseWriter, r *http.Request, cfg Config, store *results, slots chan struct{}) {
 	r.Body = http.MaxBytesReader(w, r.Body, converter.MaxBundleSize+1<<20)
 	if err := r.ParseMultipartForm(16 << 20); err != nil {
 		var tooBig *http.MaxBytesError
@@ -94,6 +107,10 @@ func convert(w http.ResponseWriter, r *http.Request, cfg Config, store *results)
 			jsonError(w, http.StatusBadRequest, "this server has no signing certificate: start it with -sign-cert and -sign-key")
 			return
 		}
+		if !validToken(r, cfg.SignToken) {
+			jsonError(w, http.StatusUnauthorized, "signing needs the server's token: send \"Authorization: Bearer TOKEN\"")
+			return
+		}
 		s := *cfg.Signer
 		s.Reason = orDefault(r.FormValue("signReason"), s.Reason)
 		s.Location = orDefault(r.FormValue("signLocation"), s.Location)
@@ -116,7 +133,17 @@ func convert(w http.ResponseWriter, r *http.Request, cfg Config, store *results)
 		req.FileName = "document.html"
 	}
 
-	res, err := converter.Convert(req)
+	// wait for a free conversion slot (or give up when the client goes away)
+	select {
+	case slots <- struct{}{}:
+	case <-r.Context().Done():
+		jsonError(w, http.StatusServiceUnavailable, "the converter is busy, try again")
+		return
+	}
+	res, err := func() (*converter.Result, error) {
+		defer func() { <-slots }() // freed even if the conversion panics
+		return converter.Convert(req)
+	}()
 	if err != nil {
 		status := http.StatusUnprocessableEntity
 		if errors.Is(err, converter.ErrTooLarge) {
@@ -329,4 +356,11 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// validToken reports whether the request carries the token (in constant
+// time). An empty token never matches.
+func validToken(r *http.Request, token string) bool {
+	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
 }

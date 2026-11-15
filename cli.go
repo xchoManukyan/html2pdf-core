@@ -14,7 +14,7 @@ import (
 
 // version is reported by -version (and used by the PHP and Node packages to check
 // that its binary matches).
-const version = "0.1.0"
+const version = "0.1.1"
 
 // report is the -json output.
 type report struct {

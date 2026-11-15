@@ -145,3 +145,10 @@ func TestColorsAndLengths(t *testing.T) {
 		}
 	}
 }
+
+func TestUnclosedNestedBlock(t *testing.T) {
+	// found by fuzzing: an unclosed nested block made the parser slice past the end
+	for _, s := range []string{"{{0", "a{b{", "a{color:red;b{c:d"} {
+		ParseStylesheet(s, Env{Width: 500, Height: 700})
+	}
+}

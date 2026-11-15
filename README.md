@@ -54,7 +54,7 @@ go run . -in samples/barcodes.html                 # <barcode> QR codes, Code 12
 go run . -in samples/scripts.html                  # Hindi, Bengali, Tamil, Arabic shaped with the fonts' OpenType rules
 go run . -in samples/forms.html -forms             # inputs, checkboxes, selects become fillable PDF fields
 go run . -in page.html -sign-cert cert.pem -sign-key key.pem -sign-reason "Approved"   # digitally signed PDF
-go run . -sign-cert cert.pem -sign-key key.pem     # web server that signs on request (API field sign=true)
+go run . -sign-cert cert.pem -sign-key key.pem -sign-token SECRET   # web server that signs requests carrying the token
 go run . -allow-remote                             # web server: let users enable remote resources
 go run . -in site/html/page.html -root site         # page may load ../css, ../img (anything inside -root)
 go run . -in page.html -viewport 1280               # desktop layout (CSS width 1280px) scaled to the paper
@@ -284,8 +284,9 @@ On a server without any fonts, the built-in PDF fonts (Helvetica/Courier, Wester
   `-sign-name`): a PAdES baseline B-B signature (CMS SignedData with SHA-256 and the signing-certificate-v2 attribute,
   `ETSI.CAdES.detached`) over the whole file, with RSA or ECDSA keys in PEM (PKCS#8, PKCS#1 or SEC 1, unencrypted;
   intermediate certificates in the certificate file are embedded). Can be combined with encryption and PDF/A. The web server
-  signs only when started with a certificate, and requests choose the reason, location and contact (`sign=true`,
-  `signReason`, `signLocation`, `signContact`); the key never leaves the server. Trusted timestamps (B-T) and visible
+  signs only when started with a certificate and a secret (`-sign-token`, or `HTML2PDF_SIGN_TOKEN`): a signing request
+  (`sign=true`, with `signReason`, `signLocation`, `signContact`) must send `Authorization: Bearer SECRET`, so only your
+  applications can have documents signed. The key never leaves the server. Trusted timestamps (B-T) and visible
   signature boxes are not added.
 - **Barcodes:** mPDF's element, `<barcode code="..." type="..." size="1" height="1" text="1" error="M"
   disableborder="1">`, drawn as vectors: QR codes (all versions and error correction levels, UTF-8), Code 128 (with

@@ -280,7 +280,7 @@ func splitNested(body string) ([]Decl, string) {
 			continue
 		}
 		_, end := block(body, j)
-		nested.WriteString(body[i : end+1])
+		nested.WriteString(body[i:min(end+1, len(body))]) // an unclosed block ends the text
 		nested.WriteByte('\n')
 		i = end + 1
 	}
