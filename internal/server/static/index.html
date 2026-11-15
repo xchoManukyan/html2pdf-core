@@ -337,6 +337,7 @@
     data.append('encryption', $('encryption').value);
     data.append('pdfa', $('pdfa').checked ? 'true' : 'false');
     data.append('forms', $('forms').checked ? 'true' : 'false');
+    data.append('keep', 'true'); // keep the PDF on the server for the download link
 
     const btn = $('convert');
     btn.disabled = true; btn.textContent = 'Converting…'; message('');

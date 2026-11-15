@@ -157,9 +157,13 @@ func convert(w http.ResponseWriter, r *http.Request, cfg Config, store *results,
 	if r.URL.Query().Get("inline") == "1" {
 		disposition = "inline"
 	}
-	id := store.put(res.FileName, res.PDF)
 	h := w.Header()
-	h.Set("X-Result-URL", "/api/result/"+id+"/"+url.PathEscape(res.FileName))
+	// the web page asks to keep the PDF for its download link; API clients get it in
+	// the response only, so the server holds no copies of their documents
+	if r.FormValue("keep") == "true" {
+		id := store.put(res.FileName, res.PDF)
+		h.Set("X-Result-URL", "/api/result/"+id+"/"+url.PathEscape(res.FileName))
+	}
 	if len(res.Missing) > 0 {
 		list, _ := json.Marshal(res.Missing)
 		h.Set("X-Missing-Resources", url.PathEscape(string(list)))

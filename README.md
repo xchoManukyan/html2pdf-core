@@ -81,7 +81,7 @@ only in a minor version):
   `pageSize`, `orientation`, `margin`, `pageNumbers`, `viewport`, `cssLib`, `allowRemote`, `userPassword`,
   `ownerPassword`, `denyPrint`, `denyCopy`, `denyModify`, `encryption`, `pdfa`, `forms`, `sign`, `signReason`,
   `signLocation`, `signContact`). The answer is the PDF with the headers `X-Render-Time-Ms`, `X-CSS-Lib` and
-  `X-Missing-Details`, or a JSON `{"error"}` with status 400, 413 or 422 for documents that cannot be converted.
+  `X-Missing-Details` (and `X-Result-URL` when the request sends `keep=true`, as the web page does), or a JSON `{"error"}` with status 400, 413 or 422 for documents that cannot be converted.
 
 ## Web interface
 
@@ -136,6 +136,10 @@ italic faces are synthesised. `@font-face` works with `data:` URIs (TTF, OTF wit
 WOFF 1.0, WOFF2) and `local()`. The CSS default family is `serif` (Times New Roman), as in browsers.
 
 On a server without any fonts, the built-in PDF fonts (Helvetica/Courier, Western European only) are used.
+
+The list of installed fonts is cached in the user's cache folder (`html2pdf/fonts.json`: names, styles, file sizes
+and times, no font data), so each new process starts quickly; `HTML2PDF_FONT_CACHE=off` turns it off and
+`HTML2PDF_FONT_CACHE=DIR` moves it. Fallback fonts are only loaded when a character needs them.
 
 ## Supported HTML/CSS
 

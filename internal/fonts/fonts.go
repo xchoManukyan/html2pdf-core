@@ -186,9 +186,11 @@ var (
 func System() *DB {
 	systemOnce.Do(func() {
 		systemDB = NewDB()
+		cache := loadCache()
 		for _, dir := range fontDirs() {
-			scanDir(systemDB, dir)
+			scanDir(systemDB, dir, cache)
 		}
+		cache.save()
 	})
 	return systemDB
 }
@@ -220,7 +222,7 @@ func fontDirs() []string {
 	return dirs
 }
 
-func scanDir(db *DB, dir string) {
+func scanDir(db *DB, dir string, cache *fontCache) {
 	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -230,26 +232,20 @@ func scanDir(db *DB, dir string) {
 		default:
 			return nil
 		}
-		file, err := os.Open(path)
+		st, err := d.Info()
 		if err != nil {
 			return nil
 		}
-		defer file.Close()
-		n := ttf.NumFaces(file)
-		for i := 0; i < n && i < 64; i++ {
-			info, err := ttf.ReadInfo(file, i)
-			if err != nil || !info.TrueType || !info.Embeddable {
-				continue
+		for _, f := range cache.faces(path, st) {
+			families := []string{f.Family}
+			if f.Legacy != "" && !strings.EqualFold(f.Legacy, f.Family) {
+				families = append(families, f.Legacy)
 			}
-			families := []string{info.Family}
-			if info.LegacyFamily != "" && !strings.EqualFold(info.LegacyFamily, info.Family) {
-				families = append(families, info.LegacyFamily)
+			if f.FullName != "" {
+				families = append(families, f.FullName)
 			}
 			for _, fam := range families {
-				db.Add(&Face{Family: fam, Weight: info.Weight, Stretch: info.Stretch, Italic: info.Italic, Path: path, Index: i})
-			}
-			if info.FullName != "" {
-				db.Add(&Face{Family: info.FullName, Weight: info.Weight, Stretch: info.Stretch, Italic: info.Italic, Path: path, Index: i})
+				db.Add(&Face{Family: fam, Weight: f.Weight, Stretch: f.Stretch, Italic: f.Italic, Path: path, Index: f.Index})
 			}
 		}
 		return nil

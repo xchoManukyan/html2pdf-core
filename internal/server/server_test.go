@@ -63,7 +63,7 @@ func TestUploadWithAssets(t *testing.T) {
 		{"home-long-version.html", "home-long-version.html", []byte(page)},
 		{"styles.css", "styles.css", []byte("h1 { color: red }")},
 		{"home (long version).png", "home (long version).png", pngFile()},
-	}, nil)
+	}, map[string]string{"keep": "true"}) // as the web page asks
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -211,5 +211,13 @@ func TestSigningNeedsToken(t *testing.T) {
 	h.ServeHTTP(plain, req)
 	if plain.Code != http.StatusOK {
 		t.Errorf("unsigned conversion: status %d", plain.Code)
+	}
+}
+
+func TestAPIResultsAreNotKept(t *testing.T) {
+	h := New(Config{})
+	rec := upload(t, h, []part{{"a.html", "a.html", []byte("<p>private</p>")}}, nil)
+	if rec.Code != 200 || rec.Header().Get("X-Result-URL") != "" {
+		t.Errorf("an API conversion must not be stored: status %d, URL %q", rec.Code, rec.Header().Get("X-Result-URL"))
 	}
 }

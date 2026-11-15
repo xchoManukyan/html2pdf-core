@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/xchoManukyan/html2pdf-core/internal/bidi"
 	"github.com/xchoManukyan/html2pdf-core/internal/fonts"
 	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
@@ -12,7 +13,9 @@ import (
 // chainFont is one font of a fallback chain, with synthesis flags for
 // weights/styles the installed face lacks.
 type chainFont struct {
-	f                    *pdf.Font
+	f                    *pdf.Font   // nil until a lazily added fallback face is first needed
+	face                 *fonts.Face // the installed or @font-face face (nil for built-in PDF fonts)
+	broken               bool        // the face could not be loaded
 	fakeBold, fakeItalic bool
 }
 
@@ -63,38 +66,84 @@ func (e *engine) chain(st *style) *fontChain {
 	}
 	c := &fontChain{e: e, weight: st.weight, italic: st.italic, byRune: map[rune]int{}}
 	seen := map[*fonts.Face]bool{}
-	add := func(face *fonts.Face) bool {
+	// add appends a face; the requested families are loaded now, the
+	// fallback families only when a character needs them (loading every
+	// installed fallback font costs time and a lot of memory).
+	add := func(face *fonts.Face, lazy bool) bool {
 		if face == nil || seen[face] {
 			return false
 		}
-		t, err := face.Load()
-		if err != nil {
-			return false
+		cf := chainFont{face: face, fakeBold: st.weight >= 600 && face.Weight < 600, fakeItalic: st.italic && !face.Italic}
+		if !lazy {
+			t, err := face.Load()
+			if err != nil {
+				return false
+			}
+			cf.f = e.doc.TrueType(t)
 		}
 		seen[face] = true
-		c.fonts = append(c.fonts, chainFont{
-			f:          e.doc.TrueType(t),
-			fakeBold:   st.weight >= 600 && face.Weight < 600,
-			fakeItalic: st.italic && !face.Italic,
-		})
+		c.fonts = append(c.fonts, cf)
 		return true
 	}
 	families := append(parseFamilies(st.family), "serif")
 	for _, fam := range families {
 		for _, name := range fonts.Expand(fam) {
-			if add(e.lookupFace(name, st.weight, st.italic)) {
+			if add(e.lookupFace(name, st.weight, st.italic), false) {
 				break
 			}
 		}
 	}
 	for _, name := range fonts.FallbackFamilies {
-		add(e.lookupFace(name, st.weight, st.italic))
+		add(e.lookupFace(name, st.weight, st.italic), true)
 	}
 	mono := isMonoFamily(st.family)
 	std := pdf.PickStd(mono, st.weight >= 600, st.italic)
 	c.fonts = append(c.fonts, chainFont{f: e.doc.Std(std)})
 	e.chains[key] = c
 	return c
+}
+
+// font returns font i of the chain, loading a fallback face on first use
+// (nil when it cannot be loaded).
+func (c *fontChain) font(i int) *pdf.Font {
+	cf := &c.fonts[i]
+	if cf.f == nil && !cf.broken {
+		if t, err := cf.face.Load(); err == nil {
+			cf.f = c.e.doc.TrueType(t)
+		} else {
+			cf.broken = true
+		}
+	}
+	return cf.f
+}
+
+// primary is the chain's main font (for line metrics): the first that loads.
+func (c *fontChain) primary() *pdf.Font {
+	for i := range c.fonts {
+		if f := c.font(i); f != nil {
+			return f
+		}
+	}
+	return c.fonts[len(c.fonts)-1].f
+}
+
+// mayShow reports whether a font not loaded yet could show r, from its
+// character map alone (Arabic presentation forms: from their base letters,
+// which the font's own joining rules shape).
+func mayShow(face *fonts.Face, r rune) bool {
+	if face.Has(r) {
+		return true
+	}
+	if !bidi.IsPresentationForm(r) {
+		return false
+	}
+	base, _ := bidi.Decompose([]rune{r})
+	for _, b := range base {
+		if !face.Has(b) {
+			return false
+		}
+	}
+	return true
 }
 
 func ignorable(r rune) bool {
@@ -108,7 +157,11 @@ func (c *fontChain) pick(r rune) int {
 	}
 	idx := len(c.fonts) - 1
 	found := false
-	for i, cf := range c.fonts {
+	for i := range c.fonts {
+		cf := &c.fonts[i]
+		if cf.f == nil && (cf.broken || !mayShow(cf.face, r) || c.font(i) == nil) {
+			continue
+		}
 		if cf.f.HasRune(r) {
 			idx, found = i, true
 			break
@@ -216,7 +269,7 @@ func (e *engine) drawSegs(p *pdf.Page, segs []textSeg, x, baseline float64, st *
 // vmetrics returns the space an inline box of this style needs above and
 // below the baseline (CSS line-height model: half-leading on each side).
 func (e *engine) vmetrics(st *style) (above, below float64) {
-	asc, desc, gap := e.chain(st).fonts[0].f.Metrics()
+	asc, desc, gap := e.chain(st).primary().Metrics()
 	content := (asc + desc) * st.size
 	lh := st.lineHeight * st.size
 	if st.lineHeight <= 0 { // "normal"

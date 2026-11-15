@@ -257,7 +257,7 @@ func Convert(src string, opt Options) (out []byte, err error) {
 			f := doc.Std(pdf.Helvetica)
 			if opt.PDFA { // built-in fonts are not allowed: use an installed sans-serif
 				if c := e.chain(&style{family: "sans-serif", weight: 400}); len(c.fonts) > 1 {
-					f = c.fonts[0].f
+					f = c.primary()
 				}
 			}
 			w := f.Width(label, 9)

@@ -691,7 +691,7 @@ func (e *engine) emitLine(frags []frag, x, w float64, block *style, justify bool
 				j++
 			}
 			if box != nil && box.visible && box.paints() {
-				asc, desc, _ := e.chain(box).fonts[0].f.Metrics()
+				asc, desc, _ := e.chain(box).primary().Metrics()
 				top := baseline + box.shift - asc*box.size - box.padding[0] - box.bw(0)
 				bot := baseline + box.shift + desc*box.size + box.padding[2] + box.bw(2)
 				hasLeft := frags[i].text == "" && frags[i].atomic == nil && frags[i].st == box

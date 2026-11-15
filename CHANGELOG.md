@@ -7,6 +7,20 @@ Changes to the command line, the `-json` report or the HTTP API (which the PHP a
 
 ## [Unreleased]
 
+## [0.1.2]
+
+Faster start and much less memory per conversion.
+
+- Fallback fonts (for characters the requested fonts lack) are loaded only when a character needs them, instead of
+  every installed fallback font at the start. A one-page invoice as its own process: 44 ms instead of 145 ms, and a
+  peak of about 10–30 MB instead of 166 MB (Windows, many installed fonts).
+- The index of installed fonts is cached in the user's cache folder (`fonts.json`: names, styles, file sizes and
+  times; no font data), so a new process does not read every font. An entry is used only for a file found in the font
+  folders with the same size and time. `HTML2PDF_FONT_CACHE=off` turns it off, `HTML2PDF_FONT_CACHE=DIR` moves it.
+- **Interface:** the server keeps a finished PDF for the web page's download link only when the request sends
+  `keep=true` (the web page does). API requests get the PDF in the response and no copy stays on the server; this
+  also cut the server's peak memory in a load test from 595 MB to 162 MB.
+
 ## [0.1.1]
 
 Security fixes from a review and fuzzing of the converter.
@@ -42,6 +56,7 @@ First release, as a repository of its own (it started inside the PHP package).
 - Local files confined to a base folder; remote resources opt-in with SSRF protection.
 - **Interface:** command line with `-json` report, HTTP API `POST /api/convert`, web upload page.
 
-[Unreleased]: https://github.com/xchoManukyan/html2pdf-core/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/xchoManukyan/html2pdf-core/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/xchoManukyan/html2pdf-core/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/xchoManukyan/html2pdf-core/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/xchoManukyan/html2pdf-core/releases/tag/v0.1.0
