@@ -4,8 +4,8 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 // flowState is the part of the engine state that a nested, positioned
@@ -181,6 +181,9 @@ func (e *engine) renderBoxInner(n *htmlparse.Node, st *style, x, w, minH float64
 	}
 	e.clipOverflow(st, startPage, mark, x, startY, w, e.y)
 	e.decorate(startPage, startY, e.y, x, w, st)
+	if e.fillable(n) && e.pageIdx == startPage {
+		e.addFormField(n, st, x, startY, w, e.y-startY)
+	}
 	if pushed {
 		e.popFrame(cbRect{page: startPage, x: x + st.bw(3), y: startY + st.bw(0), w: w - st.bw(1) - st.bw(3),
 			h: e.y - startY - st.bw(0) - st.bw(2)})

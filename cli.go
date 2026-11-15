@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/converter"
+	"github.com/xchoManukyan/html2pdf-core/internal/converter"
 )
 
-// version is reported by -version (and used by the PHP package to check
+// version is reported by -version (and used by the PHP and Node packages to check
 // that its binary matches).
 const version = "0.1.0"
 

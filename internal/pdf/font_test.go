@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/ttf"
+	"github.com/xchoManukyan/html2pdf-core/internal/ttf"
 )
 
 // systemFont loads a font shipped with the OS, or skips the test.
@@ -37,10 +37,10 @@ func TestKerning(t *testing.T) {
 	if pair := f.Width("AV", 12); pair >= sep-0.01 {
 		t.Errorf("kerned width %.3f should be below %.3f", pair, sep)
 	}
-	if op := f.show("AVA"); !strings.HasSuffix(op, "] TJ") || !strings.Contains(op, "> ") {
+	if op := f.show("AVA", 10, false); !strings.HasSuffix(op, "] TJ") || !strings.Contains(op, "> ") {
 		t.Errorf("kerned text should use a TJ array, got %q", op)
 	}
-	if op := f.show("ab"); !strings.HasSuffix(op, "> Tj") {
+	if op := f.show("ab", 10, false); !strings.HasSuffix(op, "> Tj") {
 		t.Errorf("unkerned text should stay a plain Tj, got %q", op)
 	}
 }

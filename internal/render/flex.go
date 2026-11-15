@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // Flexbox layout (CSS Flexible Box Layout Level 1), adapted to paged
@@ -348,6 +348,9 @@ func (e *engine) layoutFlexRow(items []*flexItem, st *style, x, w float64) {
 	rowGap := e.gap(st.rowGapExpr, st, w)
 	e.resolveRowSizes(items, st, w)
 	reverse := st.flexDir == "row-reverse"
+	if st.direction == "rtl" { // the main axis starts at the right
+		reverse = !reverse
+	}
 
 	// Break into lines.
 	var lines [][]*flexItem

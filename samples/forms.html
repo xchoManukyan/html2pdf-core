@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fillable form</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 14px; color: #1f2937; }
+  h1 { font-size: 22px; margin: 0 0 12px; }
+  label { display: block; margin: 10px 0 4px; font-weight: bold; }
+  input[type=text], input[type=email], input[type=password], select, textarea { width: 300px; padding: 4px 6px; border: 1px solid #9ca3af; border-radius: 4px; font-size: 13px; }
+  .inline label { display: inline; font-weight: normal; margin-right: 14px; }
+  fieldset { border: 1px solid #d1d5db; border-radius: 6px; margin: 12px 0; }
+</style>
+</head>
+<body>
+  <h1>Membership application</h1>
+  <form>
+    <label for="name">Full name</label>
+    <input type="text" id="name" name="name" value="Ada Lovelace" required>
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" placeholder="you@example.com">
+    <label for="pin">PIN</label>
+    <input type="password" id="pin" name="pin" value="1234" maxlength="6">
+    <label for="plan">Plan</label>
+    <select id="plan" name="plan">
+      <option>Basic</option><option selected>Standard</option><option>Premium</option>
+    </select>
+    <label for="notes">Notes</label>
+    <textarea id="notes" name="notes" rows="4">First line
+Second line</textarea>
+    <fieldset class="inline">
+      <legend>Contact by</legend>
+      <label><input type="radio" name="contact" value="email" checked> Email</label>
+      <label><input type="radio" name="contact" value="phone"> Phone</label>
+      <label><input type="radio" name="contact" value="post"> Post</label>
+    </fieldset>
+    <div class="inline">
+      <label><input type="checkbox" name="terms" checked> I accept the terms</label>
+      <label><input type="checkbox" name="news" value="weekly"> Weekly newsletter</label>
+    </div>
+    <p><input type="submit" value="Send"></p>
+  </form>
+</body>
+</html>

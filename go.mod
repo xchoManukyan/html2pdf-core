@@ -1,4 +1,4 @@
-module github.com/xchoManukyan/html2pdf/converter
+module github.com/xchoManukyan/html2pdf-core
 
 go 1.22
 

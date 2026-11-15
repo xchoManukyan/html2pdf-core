@@ -3,17 +3,18 @@
 package render
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/fonts"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
-	"github.com/xchoManukyan/html2pdf/converter/internal/ttf"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/fonts"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/ttf"
 )
 
 // Options controls the page setup. CSS @page rules in the document take
@@ -47,7 +48,19 @@ type Options struct {
 
 	// Encrypt protects the PDF with passwords and permissions (nil: none).
 	Encrypt *pdf.Encryption
+	// PDFA writes a PDF/A-2b archival document. Every font must be embedded,
+	// so text that only the built-in PDF fonts could draw is an error.
+	PDFA bool
+	// Forms turns inputs, checkboxes, radio buttons, selects and textareas
+	// into fillable PDF form fields (otherwise they are printed as they look).
+	Forms bool
+	// Sign adds a digital signature (PAdES B-B) with this certificate and key.
+	Sign *pdf.Signature
 }
+
+// ErrPDFAFonts: PDF/A needs every font embedded, and the text could only be
+// drawn with a built-in PDF font (install fonts or use @font-face).
+var ErrPDFAFonts = errors.New("PDF/A requires embedded fonts")
 
 // ErrEmpty is returned for documents without any content.
 var ErrEmpty = errors.New("the HTML document is empty")
@@ -108,6 +121,7 @@ func Convert(src string, opt Options) (out []byte, err error) {
 	setup.margin = [4]float64{m, m, m, m}
 
 	root := htmlparse.Parse(src)
+	expandBarcodes(root)
 	baseURL := opt.BaseURL
 	if baseURL == "" {
 		baseURL = "local:/document.html"
@@ -149,6 +163,8 @@ func Convert(src string, opt Options) (out []byte, err error) {
 	doc := pdf.New(setup.w, setup.h)
 	doc.Scale = scale
 	doc.Encrypt = opt.Encrypt
+	doc.PDFA = opt.PDFA
+	doc.Sign = opt.Sign
 	documentMeta(root, doc)
 	if t := root.Find("title"); t != nil {
 		doc.Title = strings.Join(strings.Fields(t.TextContent()), " ")
@@ -173,6 +189,11 @@ func Convert(src string, opt Options) (out []byte, err error) {
 		env:          setup.env(),
 		inlineSVG:    map[*htmlparse.Node]*picture{},
 		formNodes:    map[*htmlparse.Node]*htmlparse.Node{},
+		formOrig:     map[*htmlparse.Node]*htmlparse.Node{},
+		forms:        opt.Forms,
+		fieldDone:    map[*htmlparse.Node]bool{},
+		fieldNames:   map[string]int{},
+		radioNames:   map[string]bool{},
 		loader:       opt.Loader,
 		baseURL:      baseURL,
 		docFonts:     fonts.NewDB(),
@@ -234,12 +255,26 @@ func Convert(src string, opt Options) (out []byte, err error) {
 		if opt.PageNumbers {
 			label := fmt.Sprintf("Page %d of %d", i+1, len(e.pages))
 			f := doc.Std(pdf.Helvetica)
+			if opt.PDFA { // built-in fonts are not allowed: use an installed sans-serif
+				if c := e.chain(&style{family: "sans-serif", weight: 400}); len(c.fonts) > 1 {
+					f = c.fonts[0].f
+				}
+			}
 			w := f.Width(label, 9)
 			p.Text((setup.w-w)/2, setup.h-setup.margin[2]/2, pdf.TextStyle{Font: f, Size: 9,
 				Color: pdf.Color{R: 0.4, G: 0.4, B: 0.4}}, label)
 		}
 	}
-	return doc.Bytes(), nil
+	if opt.PDFA {
+		if fonts := doc.UnembeddedFonts(); len(fonts) > 0 {
+			return nil, fmt.Errorf("%w: some text has no installed or @font-face font and would use %s", ErrPDFAFonts, strings.Join(fonts, ", "))
+		}
+	}
+	var file bytes.Buffer
+	if _, err := doc.WriteTo(&file); err != nil {
+		return nil, err
+	}
+	return file.Bytes(), nil
 }
 
 // customSize parses "210x297" (millimetres, width x height), limited to the
@@ -376,6 +411,10 @@ func (e *engine) registerFontFace(decls []css.Decl) {
 			}
 			if len(data) > 4 && string(data[:4]) == "wOFF" {
 				if data, err = ttf.DecodeWOFF(data); err != nil {
+					continue
+				}
+			} else if len(data) > 4 && string(data[:4]) == "wOF2" {
+				if data, err = ttf.DecodeWOFF2(data); err != nil {
 					continue
 				}
 			}

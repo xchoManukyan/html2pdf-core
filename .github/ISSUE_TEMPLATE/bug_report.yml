@@ -1,0 +1,45 @@
+name: Bug report
+description: The PDF looks different from the browser, a conversion fails, or the converter misbehaves
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The quickest fix comes from a small HTML document that shows the problem.
+        Please remove anything private from it. For security issues, use the private report described in SECURITY.md instead.
+  - type: textarea
+    id: html
+    attributes:
+      label: HTML (and CSS) that shows the problem
+      description: As small as possible. Attach images or files if they matter.
+      render: html
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Command, API call or wrapper code, with the options
+      render: shell
+      placeholder: |
+        html2pdf -in page.html -viewport 1280 -forms
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected and what you got
+      description: Screenshots of the browser and of the PDF help a lot.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Converter version (html2pdf -version)
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system, and the PHP or Node package if you use one
+      placeholder: "Ubuntu 24.04 x64, PHP package 0.1.0"
+    validations:
+      required: true

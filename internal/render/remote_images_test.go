@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
 )
 
 // External images: a local HTTP server plays the remote hosts. The loader

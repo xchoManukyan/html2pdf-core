@@ -3,8 +3,8 @@ package render
 import (
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 // anchor registers an element's id (or <a name>) as a link destination.

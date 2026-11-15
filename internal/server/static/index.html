@@ -147,7 +147,7 @@
     </fieldset>
     <label class="check"><input type="checkbox" id="pageNumbers" name="pageNumbers" checked> Add page numbers</label>
     <details class="adv">
-      <summary>Advanced: remote resources &amp; password protection</summary>
+      <summary>Advanced: remote resources, password protection, PDF/A</summary>
       <label class="check" id="remoteRow"><input type="checkbox" id="allowRemote"> Load remote images, stylesheets and fonts (http/https)</label>
       <div class="options">
         <div><label for="userPassword">Open password</label><input id="userPassword" type="password" autocomplete="new-password" placeholder="none"></div>
@@ -155,6 +155,11 @@
       </div>
       <label class="check"><input type="checkbox" id="denyPrint"> Disallow printing</label>
       <label class="check"><input type="checkbox" id="denyCopy"> Disallow copying text</label>
+      <div class="options">
+        <div><label for="encryption">Encryption</label><select id="encryption"><option value="aes-256" selected>AES-256 (recommended)</option><option value="aes-128">AES-128</option><option value="rc4-128">RC4 (very old readers)</option></select></div>
+      </div>
+      <label class="check" title="Archival PDF: embedded fonts, metadata, sRGB colours. Cannot be combined with passwords."><input type="checkbox" id="pdfa"> PDF/A-2b (for archiving)</label>
+      <label class="check" title="Inputs, checkboxes, radio buttons, selects and textareas become fields people can fill in."><input type="checkbox" id="forms"> Fillable form fields</label>
     </details>
 
     <div class="actions">
@@ -329,6 +334,9 @@
     data.append('ownerPassword', $('ownerPassword').value);
     data.append('denyPrint', $('denyPrint').checked ? 'true' : 'false');
     data.append('denyCopy', $('denyCopy').checked ? 'true' : 'false');
+    data.append('encryption', $('encryption').value);
+    data.append('pdfa', $('pdfa').checked ? 'true' : 'false');
+    data.append('forms', $('forms').checked ? 'true' : 'false');
 
     const btn = $('convert');
     btn.disabled = true; btn.textContent = 'Converting…'; message('');

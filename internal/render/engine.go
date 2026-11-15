@@ -1,16 +1,17 @@
 package render
 
 import (
+	"github.com/xchoManukyan/html2pdf-core/internal/bidi"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/fonts"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/fonts"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
 )
 
 // engine lays the document out top to bottom, breaking pages as needed.
@@ -18,6 +19,11 @@ type engine struct {
 	doc     *pdf.Document
 	pages   []*pdf.Page
 	pageIdx int
+
+	// subgrids: how many (rows, columns) a subgrid item spans in its parent
+	// grid, and the parent's track sizes it lays its own items out on
+	subgridSpan   map[*htmlparse.Node][2]int
+	subgridTracks map[*htmlparse.Node]*subTracks
 
 	top, bottom, left, right float64 // content area of a page
 	contentWidth             float64
@@ -46,6 +52,11 @@ type engine struct {
 	env          css.Env                      // media query environment (for <source media>)
 	inlineSVG    map[*htmlparse.Node]*picture
 	formNodes    map[*htmlparse.Node]*htmlparse.Node
+	formOrig     map[*htmlparse.Node]*htmlparse.Node // form stand-in -> its element
+	forms        bool                                // make fillable fields (Options.Forms)
+	fieldDone    map[*htmlparse.Node]bool
+	fieldNames   map[string]int
+	radioNames   map[string]bool
 	loader       *resource.Loader
 	baseURL      string
 
@@ -186,6 +197,10 @@ func (e *engine) collect(n *htmlparse.Node, st *style, items *[]item) {
 			text := c.Text
 			if idx == 0 && (n.Tag == "pre" || n.Tag == "textarea" || n.Tag == "listing") {
 				text = strings.TrimPrefix(strings.TrimPrefix(text, "\r"), "\n")
+			}
+			if e.fillable(n) {
+				e.collectString(text, hiddenText(st), items) // the PDF field shows the value
+				continue
 			}
 			e.collectString(text, st, items)
 		case htmlparse.ElementNode:
@@ -347,7 +362,8 @@ func (e *engine) collectText(text string, st *style, items *[]item) {
 	}
 }
 
-func transformWord(w, t string) string { return transformText(w, t) }
+// transformWord applies text-transform and Arabic contextual shaping.
+func transformWord(w, t string) string { return bidi.Shape(transformText(w, t)) }
 
 func (e *engine) collectPre(text string, st *style, items *[]item) {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -357,7 +373,7 @@ func (e *engine) collectPre(text string, st *style, items *[]item) {
 			*items = append(*items, item{kind: kBreak, st: st})
 		}
 		if line != "" {
-			*items = append(*items, item{kind: kWord, text: line, st: st})
+			*items = append(*items, item{kind: kWord, text: bidi.Shape(line), st: st})
 		}
 	}
 }
@@ -453,6 +469,12 @@ func (lb *lineBuilder) gap(w float64, st *style) {
 
 func (lb *lineBuilder) word(text string, st *style) {
 	e := lb.e
+	// nowrap and pre text overflows instead of breaking
+	noWrap := st.ws == "nowrap" || st.ws == "pre"
+	text, brks := breakPoints(text, st)
+	if noWrap {
+		brks = nil
+	}
 	ww := e.textWidth(st, text)
 	lb.ensureLine(ww)
 	sp := 0.0
@@ -460,14 +482,49 @@ func (lb *lineBuilder) word(text string, st *style) {
 		sp = e.spaceWidth(st)
 	}
 	lb.pending = false
+	// A word that does not fit is broken at the last hyphenation point
+	// (soft hyphen, hyphens: auto, or after a hyphen) whose first part fits.
+	for len(brks) > 0 && lb.width+sp+ww > lb.avail()+0.01 {
+		room := lb.avail() - lb.width - sp
+		k := -1
+		for i := len(brks) - 1; i >= 0; i-- {
+			if e.textWidth(st, hyphenPiece(text, brks[i])) <= room+0.01 {
+				k = i
+				break
+			}
+		}
+		if k < 0 {
+			if len(lb.frags) == 0 {
+				break // too narrow even for the first part: split by characters below
+			}
+			lb.emit(true) // try again at the start of the next line
+			lb.ensureLine(ww)
+			sp = 0
+			continue
+		}
+		b := brks[k]
+		piece := hyphenPiece(text, b)
+		pw := e.textWidth(st, piece)
+		lb.frags = append(lb.frags, frag{text: piece, st: st, w: pw, space: sp})
+		lb.width += sp + pw
+		lb.emit(true)
+		text = text[b.at:]
+		rest := make([]wordBreak, 0, len(brks)-k-1)
+		for _, r := range brks[k+1:] {
+			rest = append(rest, wordBreak{r.at - b.at, r.hyphen})
+		}
+		brks = rest
+		ww = e.textWidth(st, text)
+		sp = 0
+		lb.ensureLine(ww)
+	}
 	if len(lb.frags) > 0 && lb.width+sp+ww > lb.avail()+0.01 {
 		lb.emit(true)
 		lb.ensureLine(ww)
 		sp = 0
 	}
-	// nowrap and pre text overflows instead of breaking; a clipped box
-	// with text-overflow: ellipsis cuts it to fit and ends it with "…"
-	noWrap := st.ws == "nowrap" || st.ws == "pre"
+	// a clipped box with text-overflow: ellipsis cuts nowrap text to fit
+	// and ends it with "…"
 	if noWrap && lb.st.ellipsis && lb.st.overflowHidden && lb.width+sp+ww > lb.avail()+0.01 {
 		text = e.fitEllipsis(st, text, lb.avail()-lb.width-sp)
 		ww = e.textWidth(st, text)
@@ -517,7 +574,11 @@ func (lb *lineBuilder) emit(wrapped bool) {
 		indent = lb.st.textIndent
 	}
 	lb.forcedBreak()
-	lb.e.emitLine(lb.frags, lb.lineX+indent, lb.lineW-indent, lb.st, wrapped && lb.st.align == "justify", nil, lb.logFlag())
+	x := lb.lineX + indent
+	if lb.st.direction == "rtl" {
+		x = lb.lineX // text-indent is on the right of right-to-left text
+	}
+	lb.e.emitLine(lb.frags, x, lb.lineW-indent, lb.st, wrapped && lb.st.align == "justify", nil, lb.logFlag())
 	lb.frags = nil
 	lb.width = 0
 	lb.lines++
@@ -556,6 +617,7 @@ func (lb *lineBuilder) placeDeferred() {
 
 // emitLine places one line of text at the current position.
 func (e *engine) emitLine(frags []frag, x, w float64, block *style, justify bool, empty *style, logFlag int) {
+	frags = e.visualLine(frags, block) // right-to-left runs in display order
 	// CSS inline formatting: the line box spans the highest "above" and the
 	// lowest "below" of all inline boxes, including the block's strut.
 	strut := block
@@ -603,9 +665,9 @@ func (e *engine) emitLine(frags []frag, x, w float64, block *style, justify bool
 	switch {
 	case justify && spaces > 0:
 		extra = max((w-total)/float64(spaces), 0)
-	case block.align == "center":
+	case block.physAlign() == "center":
 		cx += (w - total) / 2
-	case block.align == "right":
+	case block.physAlign() == "right":
 		cx += w - total
 	}
 

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Barcodes</title>
+<style>
+  body { font-family: Helvetica, Arial, sans-serif; color: #1f2937; margin: 0; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .muted { color: #6b7280; font-size: 12px; }
+  .ticket { display: flex; gap: 24px; align-items: center; border: 2px dashed #9ca3af; border-radius: 12px; padding: 18px 22px; margin: 18px 0; }
+  .ticket .info { flex: 1; }
+  .ticket .info strong { font-size: 18px; display: block; margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #e5e7eb; vertical-align: middle; }
+  th { color: #6b7280; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .blue { color: #1d4ed8; }
+</style>
+</head>
+<body>
+  <h1>Barcodes and QR codes</h1>
+  <p class="muted">The <code>&lt;barcode&gt;</code> element uses mPDF's attributes: <code>code</code>, <code>type</code>,
+    <code>size</code>, <code>height</code>, <code>text</code>, <code>error</code>, <code>disableborder</code>. CSS sizes and colours apply.</p>
+
+  <div class="ticket">
+    <barcode code="https://example.com/t/7F3K-29QX" type="QR" size="1.2" error="M">
+    <div class="info">
+      <strong>Concert ticket · Row 12, Seat 7</strong>
+      <div class="muted">Saturday 14 November · Doors 19:00</div>
+      <div style="margin-top: 10px"><barcode code="TKT-7F3K-29QX" type="C128" height="0.6" text="1"></div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Type</th><th>Code</th><th>Barcode</th></tr>
+    <tr><td>EAN-13</td><td>4006381333931</td><td><barcode code="4006381333931" type="EAN13" size="0.8"></td></tr>
+    <tr><td>EAN-8</td><td>9638507 (check digit added)</td><td><barcode code="9638507" type="EAN8" size="0.8"></td></tr>
+    <tr><td>UPC-A</td><td>036000291452</td><td><barcode code="036000291452" type="UPCA" size="0.8"></td></tr>
+    <tr><td>ISBN</td><td>978-0-306-40615-7</td><td><barcode code="978-0-306-40615-7" type="ISBN" size="0.8"></td></tr>
+    <tr><td>Code 128</td><td>ORDER-2024-000123</td><td><barcode code="ORDER-2024-000123" type="C128" height="0.5" text="1"></td></tr>
+    <tr><td>Code 39</td><td>PART-42 (with check)</td><td><barcode code="PART-42" type="C39+" height="0.5" text="1"></td></tr>
+    <tr><td>Interleaved 2 of 5</td><td>12345670</td><td><barcode code="12345670" type="I25" height="0.5" text="1"></td></tr>
+    <tr><td>QR, coloured</td><td>Grüße — Привет — 你好</td><td><barcode class="blue" code="Grüße — Привет — 你好" type="QR" size="0.7" error="H"></td></tr>
+    <tr><td>Invalid</td><td>12 (too short)</td><td><barcode code="12" type="EAN13"></td></tr>
+  </table>
+</body>
+</html>

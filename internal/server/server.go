@@ -17,7 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/converter"
+	"github.com/xchoManukyan/html2pdf-core/internal/converter"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 //go:embed static/index.html
@@ -28,6 +29,10 @@ type Config struct {
 	// AllowRemote lets users enable downloading of remote resources
 	// (images, stylesheets, fonts by URL). Off by default, like dompdf.
 	AllowRemote bool
+	// Signer, when set, signs the documents of requests that ask for it
+	// (sign=true). The key stays on the server; clients only choose the
+	// reason and location.
+	Signer *pdf.Signature
 }
 
 // New returns the HTTP handler of the application.
@@ -39,7 +44,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("GET /api/result/{id}/{name}", func(w http.ResponseWriter, r *http.Request) { result(w, r, store) })
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"allowRemote": cfg.AllowRemote})
+		json.NewEncoder(w).Encode(map[string]bool{"allowRemote": cfg.AllowRemote, "sign": cfg.Signer != nil})
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
@@ -81,6 +86,20 @@ func convert(w http.ResponseWriter, r *http.Request, cfg Config, store *results)
 	req.DenyPrint = r.FormValue("denyPrint") == "true"
 	req.DenyCopy = r.FormValue("denyCopy") == "true"
 	req.DenyModify = r.FormValue("denyModify") == "true"
+	req.Encryption = r.FormValue("encryption")
+	req.PDFA = r.FormValue("pdfa") == "true"
+	req.Forms = r.FormValue("forms") == "true"
+	if r.FormValue("sign") == "true" {
+		if cfg.Signer == nil {
+			jsonError(w, http.StatusBadRequest, "this server has no signing certificate: start it with -sign-cert and -sign-key")
+			return
+		}
+		s := *cfg.Signer
+		s.Reason = orDefault(r.FormValue("signReason"), s.Reason)
+		s.Location = orDefault(r.FormValue("signLocation"), s.Location)
+		s.Contact = orDefault(r.FormValue("signContact"), s.Contact)
+		req.Sign = &s
+	}
 
 	if files := r.MultipartForm.File["file"]; len(files) > 0 {
 		if err := readUpload(r, files, &req); err != nil {
@@ -303,4 +322,11 @@ func logRequests(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Millisecond))
 	})
+}
+
+func orDefault(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
 }

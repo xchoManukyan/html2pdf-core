@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/ttf"
+	"github.com/xchoManukyan/html2pdf-core/internal/ttf"
 )
 
 // Color is an RGB color with components in 0..1. A is the opacity; the
@@ -49,6 +49,12 @@ type Document struct {
 	Keywords      string
 	Creator       string
 	Encrypt       *Encryption // password protection and permissions (nil: none)
+	// PDFA writes a PDF/A-2b document (archival): XMP metadata, an sRGB
+	// output intent, and only embedded fonts (check UnembeddedFonts first).
+	// It cannot be combined with Encrypt.
+	PDFA bool
+	// Sign adds a digital signature (PAdES B-B) to the finished file.
+	Sign *Signature
 	// Scale shrinks everything uniformly when writing: pages are laid out
 	// at Width x Height and printed at Width*Scale x Height*Scale. 0 or 1:
 	// no scaling (used to fit a wide CSS viewport onto the paper).
@@ -63,6 +69,7 @@ type Document struct {
 	shadings  []*Shading
 	forms     []*Form
 	softMasks []softMask
+	widgets   []*widget
 }
 
 // Page holds the drawing operations of one page. Background operations are
@@ -169,7 +176,7 @@ func (p *Page) Text(x, baseline float64, t TextStyle, s string) {
 	} else {
 		fmt.Fprintf(&b, "%s %s Td ", num(x), num(y))
 	}
-	fmt.Fprintf(&b, "%s ET", t.Font.show(s))
+	fmt.Fprintf(&b, "%s ET", t.Font.show(s, t.Size, false))
 	if isolated {
 		b.WriteString(" Q")
 	}
@@ -336,7 +343,14 @@ func (d *Document) WriteTo(out io.Writer) (int64, error) {
 	if d.Encrypt != nil {
 		w.crypt = newCryptor(d.Encrypt)
 	}
-	buf.WriteString("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")
+	version, extensions := "1.4", ""
+	if w.crypt != nil {
+		version, extensions = w.crypt.version(), w.crypt.catalogExtensions()
+	}
+	if d.PDFA {
+		version = "1.7" // PDF/A-2 is based on PDF 1.7
+	}
+	buf.WriteString("%PDF-" + version + "\n%\xE2\xE3\xCF\xD3\n")
 
 	// Object numbering: 1 catalog, 2 page tree, 3 info, fonts, images, pages.
 	const catalogID, pagesID, infoID = 1, 2, 3
@@ -377,25 +391,44 @@ func (d *Document) WriteTo(out io.Writer) (int64, error) {
 		encryptID = next
 		next++
 	}
+	metadataID, iccID := 0, 0
+	if d.PDFA {
+		metadataID, iccID = next, next+1
+		next += 2
+		extensions += fmt.Sprintf(" /Metadata %d 0 R /OutputIntents [<< /Type /OutputIntent /S /GTS_PDFA1"+
+			" /OutputConditionIdentifier (sRGB IEC61966-2.1) /Info (sRGB IEC61966-2.1) /RegistryName (http://www.color.org)"+
+			" /DestOutputProfile %d 0 R >>]", metadataID, iccID)
+	}
+	var form *formLayout
+	if len(d.widgets) > 0 || d.Sign != nil {
+		form, next = d.layoutForm(next)
+		extensions += form.acroForm()
+	}
+	created := time.Now().UTC()
 
-	w.object(catalogID, fmt.Sprintf("<< /Type /Catalog /Pages %d 0 R >>", pagesID))
+	w.object(catalogID, fmt.Sprintf("<< /Type /Catalog /Pages %d 0 R%s >>", pagesID, extensions))
 	var kids strings.Builder
 	for _, id := range pageIDs {
 		fmt.Fprintf(&kids, "%d 0 R ", id)
 	}
 	w.object(pagesID, fmt.Sprintf("<< /Type /Pages /Kids [ %s] /Count %d /MediaBox [0 0 %s %s] >>",
 		kids.String(), len(d.pages), num(d.Width*d.scale()), num(d.Height*d.scale())))
-	info := "<< /Producer " + w.str(infoID, "html2pdf - Go standard library")
+	info := "<< /Producer " + w.str(infoID, producer)
 	for _, kv := range [][2]string{{"Title", d.Title}, {"Author", d.Author}, {"Subject", d.Subject}, {"Keywords", d.Keywords}, {"Creator", d.Creator}} {
 		if kv[1] != "" {
 			info += " /" + kv[0] + " " + w.str(infoID, kv[1])
 		}
 	}
-	info += " /CreationDate " + w.str(infoID, time.Now().UTC().Format("D:20060102150405Z"))
+	stamp := created.Format("D:20060102150405Z")
+	info += " /CreationDate " + w.str(infoID, stamp) + " /ModDate " + w.str(infoID, stamp)
 	w.object(infoID, info+" >>")
 	if w.crypt != nil {
 		// the encryption dictionary itself is never encrypted
 		w.object(encryptID, w.crypt.dict())
+	}
+	if d.PDFA {
+		w.stream(metadataID, "/Type /Metadata /Subtype /XML", d.xmpMetadata(created)) // uncompressed, as PDF/A asks
+		w.stream(iccID, "/N 3 /Filter /FlateDecode", deflate(srgbProfile()))
 	}
 
 	for _, f := range fonts {
@@ -465,7 +498,11 @@ func (d *Document) WriteTo(out io.Writer) (int64, error) {
 
 	for i, p := range d.pages {
 		var annots string
-		if len(p.links) > 0 {
+		var fieldAnnots []int
+		if form != nil {
+			fieldAnnots = form.pageAnnots[i]
+		}
+		if len(p.links)+len(fieldAnnots) > 0 {
 			var a strings.Builder
 			a.WriteString(" /Annots [")
 			for _, l := range p.links {
@@ -476,10 +513,13 @@ func (d *Document) WriteTo(out io.Writer) (int64, error) {
 					if !ok || dst.page >= len(pageIDs) {
 						continue
 					}
-					fmt.Fprintf(&a, " << /Type /Annot /Subtype /Link %s /Dest [%d 0 R /XYZ 0 %s null] >>", rect, pageIDs[dst.page], num((d.Height-dst.y)*s))
+					fmt.Fprintf(&a, " << /Type /Annot /Subtype /Link /F 4 %s /Dest [%d 0 R /XYZ 0 %s null] >>", rect, pageIDs[dst.page], num((d.Height-dst.y)*s))
 					continue
 				}
-				fmt.Fprintf(&a, " << /Type /Annot /Subtype /Link %s /A << /S /URI /URI %s >> >>", rect, w.str(pageIDs[i], l.uri))
+				fmt.Fprintf(&a, " << /Type /Annot /Subtype /Link /F 4 %s /A << /S /URI /URI %s >> >>", rect, w.str(pageIDs[i], l.uri))
+			}
+			for _, id := range fieldAnnots {
+				fmt.Fprintf(&a, " %d 0 R", id)
 			}
 			a.WriteString(" ]")
 			annots = a.String()
@@ -501,19 +541,32 @@ func (d *Document) WriteTo(out io.Writer) (int64, error) {
 		w.stream(contentIDs[i], "/Filter /FlateDecode", deflate(content.Bytes()))
 	}
 
+	if form != nil {
+		d.writeForm(w, form, pageIDs)
+	}
+
 	xref := buf.Len()
 	fmt.Fprintf(buf, "xref\n0 %d\n0000000000 65535 f \n", next)
 	for id := 1; id < next; id++ {
 		fmt.Fprintf(buf, "%010d 00000 n \n", w.offsets[id])
 	}
+	// a file identifier (required by PDF/A and for encryption)
+	fileID := random(16)
 	extra := ""
 	if w.crypt != nil {
-		id := hex.EncodeToString(w.crypt.id)
-		extra = fmt.Sprintf(" /Encrypt %d 0 R /ID [<%s> <%s>]", encryptID, id, id)
+		fileID = w.crypt.id
+		extra = fmt.Sprintf(" /Encrypt %d 0 R", encryptID)
 	}
+	id := hex.EncodeToString(fileID)
+	extra += fmt.Sprintf(" /ID [<%s> <%s>]", id, id)
 	fmt.Fprintf(buf, "trailer\n<< /Size %d /Root %d 0 R /Info %d 0 R%s >>\nstartxref\n%d\n%%%%EOF\n",
 		next, catalogID, infoID, extra, xref)
 
+	if d.Sign != nil {
+		if err := d.Sign.applySignature(buf.Bytes()); err != nil {
+			return 0, err
+		}
+	}
 	n, err := out.Write(buf.Bytes())
 	return int64(n), err
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/ttf"
+	"github.com/xchoManukyan/html2pdf-core/internal/ttf"
 )
 
 // Font is a font usable on the pages of one document: either one of the
@@ -16,8 +16,9 @@ type Font struct {
 	id   int
 	std  StdFont // valid when tt == nil
 	tt   *ttf.Font
-	used map[uint16]rune // glyph -> character, for subsetting and ToUnicode
-	refd bool            // drawn at least once
+	used map[uint16]string // glyph -> characters, for subsetting and ToUnicode
+	runs map[string]*shapedRun
+	refd bool // drawn at least once
 
 	objID int // first PDF object number (set while writing)
 }
@@ -44,7 +45,7 @@ func (d *Document) TrueType(t *ttf.Font) *Font {
 	if font, ok := d.ttFonts[t]; ok {
 		return font
 	}
-	font := &Font{id: len(d.fonts) + 1, tt: t, used: map[uint16]rune{}}
+	font := &Font{id: len(d.fonts) + 1, tt: t, used: map[uint16]string{}}
 	d.fonts = append(d.fonts, font)
 	d.ttFonts[t] = font
 	return font
@@ -56,7 +57,7 @@ func (f *Font) IsTrueType() bool { return f.tt != nil }
 // HasRune reports whether the font can show r.
 func (f *Font) HasRune(r rune) bool {
 	if f.tt != nil {
-		return f.tt.GlyphIndex(r) != 0
+		return f.tt.GlyphIndex(r) != 0 || f.canShape(r)
 	}
 	enc := Encode(string(r))
 	return len(enc) == 1 && (enc[0] != '?' || r == '?')
@@ -66,6 +67,9 @@ func (f *Font) HasRune(r rune) bool {
 func (f *Font) Width(s string, size float64) float64 {
 	if f.tt == nil {
 		return TextWidth(f.std, size, s)
+	}
+	if run := f.shaped(s); run != nil {
+		return float64(run.width) * size / float64(f.tt.UnitsPerEm)
 	}
 	total := 0
 	var prev uint16
@@ -94,9 +98,12 @@ func (f *Font) Metrics() (ascent, descent, gap float64) {
 
 // show returns the text-showing operator for s: "<...> Tj", or a TJ array
 // when kerning moves glyphs closer together or apart.
-func (f *Font) show(s string) string {
+func (f *Font) show(s string, size float64, flipY bool) string {
 	if f.tt == nil {
 		return f.encode(s) + " Tj"
+	}
+	if run := f.shaped(s); run != nil {
+		return f.showShaped(run, size, flipY)
 	}
 	f.refd = true
 	var sb strings.Builder
@@ -106,7 +113,7 @@ func (f *Font) show(s string) string {
 	for i, r := range []rune(s) {
 		g := f.tt.GlyphIndex(r)
 		if _, ok := f.used[g]; !ok && g != 0 {
-			f.used[g] = r
+			f.used[g] = string(r)
 		}
 		if i > 0 {
 			if k := f.tt.Kern(prev, g); k != 0 {
@@ -136,7 +143,7 @@ func (f *Font) encode(s string) string {
 	for _, r := range s {
 		g := f.tt.GlyphIndex(r)
 		if _, ok := f.used[g]; !ok && g != 0 {
-			f.used[g] = r
+			f.used[g] = string(r)
 		}
 		fmt.Fprintf(&sb, "%04X", g)
 	}
@@ -230,12 +237,18 @@ func (f *Font) toUnicode(glyphs []int) string {
 		"/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n" +
 		"/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n" +
 		"1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n")
-	for i := 0; i < len(glyphs); i += 100 {
-		end := min(i+100, len(glyphs))
+	var mapped []int // glyphs that stand for some text
+	for _, g := range glyphs {
+		if f.used[uint16(g)] != "" {
+			mapped = append(mapped, g)
+		}
+	}
+	for i := 0; i < len(mapped); i += 100 {
+		end := min(i+100, len(mapped))
 		fmt.Fprintf(&sb, "%d beginbfchar\n", end-i)
-		for _, g := range glyphs[i:end] {
+		for _, g := range mapped[i:end] {
 			fmt.Fprintf(&sb, "<%04X> <", g)
-			for _, u := range utf16.Encode([]rune{f.used[uint16(g)]}) {
+			for _, u := range utf16.Encode([]rune(f.used[uint16(g)])) {
 				fmt.Fprintf(&sb, "%04X", u)
 			}
 			sb.WriteString(">\n")

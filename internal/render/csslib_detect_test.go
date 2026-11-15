@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
 )
 
 // describe lists the detected frameworks as "lib/source+lib/source".

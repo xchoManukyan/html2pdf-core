@@ -51,7 +51,7 @@ func (p *Page) TextOps(t TextStyle, x, y float64, s string) string {
 	if t.FakeItalic {
 		skew = "0.21"
 	}
-	fmt.Fprintf(&b, "1 0 %s -1 %s %s Tm %s ET Q\n", skew, num(x), num(y), t.Font.show(s))
+	fmt.Fprintf(&b, "1 0 %s -1 %s %s Tm %s ET Q\n", skew, num(x), num(y), t.Font.show(s, t.Size, true))
 	return b.String()
 }
 

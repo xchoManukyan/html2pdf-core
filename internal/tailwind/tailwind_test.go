@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 func gen(t *testing.T, class string) string {

@@ -1,18 +1,29 @@
 package pdf
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rc4"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"strings"
 	"unicode/utf16"
 )
 
-// Encryption protects the document with the PDF Standard Security
-// Handler (revision 3, 128-bit RC4) — the scheme dompdf/CPDF uses.
+// Encryption methods of the PDF Standard Security Handler.
+const (
+	AES256 = "aes-256" // revision 6 (PDF 2.0, readable by Acrobat X+ and all current viewers); the default
+	AES128 = "aes-128" // revision 4 (PDF 1.6)
+	RC4128 = "rc4-128" // revision 3 (PDF 1.4); weak, only for very old readers
+)
+
+// Encryption protects the document with the PDF Standard Security Handler.
 type Encryption struct {
 	UserPassword  string // needed to open the document ("" = opens without a password)
 	OwnerPassword string // full access; defaults to a random value
@@ -20,6 +31,7 @@ type Encryption struct {
 	AllowCopy     bool
 	AllowModify   bool
 	AllowAnnotate bool
+	Method        string // AES256 (default), AES128 or RC4128
 }
 
 var padding = []byte{
@@ -42,19 +54,43 @@ func rc4Crypt(key, data []byte) []byte {
 	return out
 }
 
+func random(n int) []byte {
+	b := make([]byte, n)
+	rand.Read(b)
+	return b
+}
+
 type cryptor struct {
-	key  []byte
-	o, u []byte
-	p    int32
-	id   []byte
+	method string
+	key    []byte // file encryption key
+	o, u   []byte
+	oe, ue []byte // revision 6
+	perms  []byte // revision 6
+	p      int32
+	id     []byte
+}
+
+// MethodOf returns the normalised encryption method ("" means AES256).
+func MethodOf(m string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "", "aes-256", "aes256", "aesv3":
+		return AES256, true
+	case "aes-128", "aes128", "aesv2":
+		return AES128, true
+	case "rc4-128", "rc4", "rc4128":
+		return RC4128, true
+	}
+	return "", false
 }
 
 func newCryptor(enc *Encryption) *cryptor {
+	method, ok := MethodOf(enc.Method)
+	if !ok {
+		method = AES256
+	}
 	owner := enc.OwnerPassword
 	if owner == "" {
-		r := make([]byte, 16)
-		rand.Read(r)
-		owner = hex.EncodeToString(r)
+		owner = hex.EncodeToString(random(16))
 	}
 	// permissions: bits 7-8 and 13-32 must be 1, bits 1-2 must be 0
 	p := uint32(0xFFFFF0C0)
@@ -70,16 +106,25 @@ func newCryptor(enc *Encryption) *cryptor {
 	if enc.AllowAnnotate {
 		p |= 32 | 256
 	}
-	c := &cryptor{p: int32(p), id: make([]byte, 16)}
-	rand.Read(c.id)
+	c := &cryptor{method: method, p: int32(p), id: random(16)}
+	if method == AES256 {
+		c.initR6(enc.UserPassword, owner, p)
+	} else {
+		c.initR34(enc.UserPassword, owner, p)
+	}
+	return c
+}
 
+// initR34 computes the keys of revisions 3 (RC4) and 4 (AES-128), which
+// share the MD5-based algorithms 2, 3 and 5 of ISO 32000-1.
+func (c *cryptor) initR34(user, owner string, p uint32) {
 	// Algorithm 3: the O entry
 	h := md5.Sum(padPassword(owner))
 	for i := 0; i < 50; i++ {
 		h = md5.Sum(h[:])
 	}
 	okey := h[:16]
-	o := rc4Crypt(okey, padPassword(enc.UserPassword))
+	o := rc4Crypt(okey, padPassword(user))
 	for i := 1; i <= 19; i++ {
 		k := make([]byte, len(okey))
 		for j := range okey {
@@ -89,9 +134,9 @@ func newCryptor(enc *Encryption) *cryptor {
 	}
 	c.o = o
 
-	// Algorithm 2: the file encryption key
+	// Algorithm 2: the file encryption key (metadata is encrypted, so no 0xFFFFFFFF suffix)
 	hh := md5.New()
-	hh.Write(padPassword(enc.UserPassword))
+	hh.Write(padPassword(user))
 	hh.Write(c.o)
 	var pb [4]byte
 	binary.LittleEndian.PutUint32(pb[:], p)
@@ -116,25 +161,163 @@ func newCryptor(enc *Encryption) *cryptor {
 		}
 		u = rc4Crypt(k, u)
 	}
-	c.u = append(u, make([]byte, 16)...)
-	return c
+	c.u = append(u, random(16)...) // the last 16 bytes are arbitrary
 }
 
-// objectKey derives the RC4 key of one object (Algorithm 1).
+// initR6 computes the entries of revision 6 (ISO 32000-2, algorithms 8, 9
+// and 10): a random 256-bit file key, wrapped once for each password.
+func (c *cryptor) initR6(user, owner string, p uint32) {
+	c.key = random(32)
+	up, op := saslPassword(user), saslPassword(owner)
+
+	// Algorithm 8: U and UE
+	uValSalt, uKeySalt := random(8), random(8)
+	c.u = append(append(hash2B(up, uValSalt, nil), uValSalt...), uKeySalt...)
+	c.ue = aesNoPad(hash2B(up, uKeySalt, nil), c.key)
+
+	// Algorithm 9: O and OE (they depend on the 48-byte U)
+	oValSalt, oKeySalt := random(8), random(8)
+	c.o = append(append(hash2B(op, oValSalt, c.u), oValSalt...), oKeySalt...)
+	c.oe = aesNoPad(hash2B(op, oKeySalt, c.u), c.key)
+
+	// Algorithm 10: Perms, the permissions encrypted with the file key
+	perms := make([]byte, 16)
+	binary.LittleEndian.PutUint32(perms[0:4], p)
+	copy(perms[4:8], []byte{0xFF, 0xFF, 0xFF, 0xFF})
+	perms[8] = 'T' // metadata is encrypted
+	copy(perms[9:12], "adb")
+	copy(perms[12:16], random(4))
+	block, _ := aes.NewCipher(c.key)
+	c.perms = make([]byte, 16)
+	block.Encrypt(c.perms, perms) // ECB of a single block
+}
+
+// saslPassword prepares a revision 6 password: UTF-8, at most 127 bytes.
+// (The full SASLprep profile only changes unusual Unicode input.)
+func saslPassword(s string) []byte {
+	b := []byte(s)
+	if len(b) > 127 {
+		b = b[:127]
+	}
+	return b
+}
+
+// hash2B is algorithm 2.B of ISO 32000-2: the hardened password hash of
+// revision 6. udata is the 48-byte U entry when hashing the owner password.
+func hash2B(password, salt, udata []byte) []byte {
+	h := sha256.New()
+	h.Write(password)
+	h.Write(salt)
+	h.Write(udata)
+	k := h.Sum(nil)
+	for round := 0; ; round++ {
+		seq := make([]byte, 0, len(password)+len(k)+len(udata))
+		seq = append(append(append(seq, password...), k...), udata...)
+		k1 := make([]byte, 0, 64*len(seq))
+		for i := 0; i < 64; i++ {
+			k1 = append(k1, seq...)
+		}
+		block, _ := aes.NewCipher(k[:16])
+		e := make([]byte, len(k1))
+		cipher.NewCBCEncrypter(block, k[16:32]).CryptBlocks(e, k1)
+		sum := 0
+		for _, b := range e[:16] {
+			sum += int(b)
+		}
+		var next hash.Hash
+		switch sum % 3 {
+		case 0:
+			next = sha256.New()
+		case 1:
+			next = sha512.New384()
+		default:
+			next = sha512.New()
+		}
+		next.Write(e)
+		k = next.Sum(nil)
+		if round >= 63 && int(e[len(e)-1]) <= round+1-32 {
+			break
+		}
+	}
+	return k[:32]
+}
+
+// aesNoPad encrypts data (a multiple of 16 bytes) with AES-256-CBC and a
+// zero IV, as UE and OE require.
+func aesNoPad(key, data []byte) []byte {
+	block, _ := aes.NewCipher(key)
+	out := make([]byte, len(data))
+	cipher.NewCBCEncrypter(block, make([]byte, 16)).CryptBlocks(out, data)
+	return out
+}
+
+// objectKey derives the key of one object (algorithm 1); revision 6 uses
+// the file key itself.
 func (c *cryptor) objectKey(id int) []byte {
+	if c.method == AES256 {
+		return c.key
+	}
 	b := append([]byte(nil), c.key...)
 	b = append(b, byte(id), byte(id>>8), byte(id>>16), 0, 0)
+	if c.method == AES128 {
+		b = append(b, 's', 'A', 'l', 'T')
+	}
 	s := md5.Sum(b)
 	return s[:16]
 }
 
 func (c *cryptor) encrypt(id int, data []byte) []byte {
-	return rc4Crypt(c.objectKey(id), data)
+	key := c.objectKey(id)
+	if c.method == RC4128 {
+		return rc4Crypt(key, data)
+	}
+	// AES-CBC with a random IV in front and PKCS#7 padding
+	pad := 16 - len(data)%16
+	plain := make([]byte, len(data)+pad)
+	copy(plain, data)
+	for i := len(data); i < len(plain); i++ {
+		plain[i] = byte(pad)
+	}
+	iv := random(16)
+	block, _ := aes.NewCipher(key)
+	out := make([]byte, 16+len(plain))
+	copy(out, iv)
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(out[16:], plain)
+	return out
 }
 
 func (c *cryptor) dict() string {
+	switch c.method {
+	case AES256:
+		return fmt.Sprintf("<< /Filter /Standard /V 5 /R 6 /Length 256 /CF << /StdCF << /AuthEvent /DocOpen /CFM /AESV3 /Length 32 >> >>"+
+			" /StmF /StdCF /StrF /StdCF /P %d /O <%s> /U <%s> /OE <%s> /UE <%s> /Perms <%s> >>",
+			c.p, hex.EncodeToString(c.o), hex.EncodeToString(c.u), hex.EncodeToString(c.oe), hex.EncodeToString(c.ue), hex.EncodeToString(c.perms))
+	case AES128:
+		return fmt.Sprintf("<< /Filter /Standard /V 4 /R 4 /Length 128 /CF << /StdCF << /AuthEvent /DocOpen /CFM /AESV2 /Length 16 >> >>"+
+			" /StmF /StdCF /StrF /StdCF /P %d /O <%s> /U <%s> >>",
+			c.p, hex.EncodeToString(c.o), hex.EncodeToString(c.u))
+	}
 	return fmt.Sprintf("<< /Filter /Standard /V 2 /R 3 /Length 128 /P %d /O <%s> /U <%s> >>",
 		c.p, hex.EncodeToString(c.o), hex.EncodeToString(c.u))
+}
+
+// version is the PDF version the encryption needs.
+func (c *cryptor) version() string {
+	switch c.method {
+	case AES256:
+		return "1.7" // with Adobe extension level 8, see catalogExtensions
+	case AES128:
+		return "1.6"
+	}
+	return "1.4"
+}
+
+// catalogExtensions declares AES-256 (revision 6) to PDF 1.7 readers.
+func (c *cryptor) catalogExtensions() string {
+	if c.method == AES256 {
+		return " /Extensions << /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >> >>"
+	}
+	return ""
 }
 
 // textBytes encodes a text string as PDFDocEncoding-compatible ASCII or

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Right-to-left text</title>
+<style>
+  body { font-family: Arial, Tahoma, sans-serif; font-size: 15px; line-height: 1.6; color: #1f2937; margin: 0; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+  .row { display: flex; gap: 10px; }
+  .row div { background: #eef2ff; padding: 6px 10px; border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: start; }
+  .ltr { direction: ltr; }
+  .grid { display: grid; grid-template-columns: 120px 120px 120px; gap: 8px; margin: 10px 0; }
+  .grid div { border: 1px solid #c7d2fe; padding: 4px 8px; }
+</style>
+</head>
+<body>
+  <h1>مرحبا بالعالم — النص من اليمين إلى اليسار</h1>
+  <div class="card">
+    <p>هذه فقرة باللغة العربية تحتوي على رقم الطلب 2024-001 والمبلغ 1,290.50 يورو، وكلمة English في وسط الجملة.</p>
+    <p>الأرقام العربية: ١٢٣ و ٤٥٦ (بين قوسين).</p>
+  </div>
+  <div class="card" lang="he" dir="rtl">
+    <p>שלום עולם! זוהי פסקה בעברית עם מספר הזמנה 7F3K-29QX ומחיר 120 ש"ח.</p>
+  </div>
+  <div class="card" lang="fa">
+    <p>این یک متن فارسی است: کتاب، پدر، گل و چای.</p>
+  </div>
+  <div class="row">
+    <div>الأول</div><div>الثاني</div><div>الثالث</div>
+  </div>
+  <div class="grid"><div>١ واحد</div><div>٢ اثنان</div><div>٣ ثلاثة</div></div>
+  <table>
+    <tr><th>المنتج</th><th>الكمية</th><th>السعر</th></tr>
+    <tr><td>قلم</td><td>3</td><td>4.50</td></tr>
+    <tr><td>دفتر</td><td>1</td><td>12.00</td></tr>
+  </table>
+  <p class="ltr">A left-to-right paragraph inside the right-to-left page, with עברית and العربية words.</p>
+</body>
+</html>

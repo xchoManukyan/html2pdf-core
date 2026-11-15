@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
 )
 
 // picture is a loaded image: a raster image embedded in the PDF, or an
@@ -298,7 +298,7 @@ func (e *engine) layoutImage(n *htmlparse.Node, st *style, x, w float64) {
 			e.addMargin(st.margin[0])
 			e.applyMargin()
 			ix := x + st.margin[3]
-			switch st.align {
+			switch st.physAlign() {
 			case "center":
 				ix += (avail - iw - st.extrasH()) / 2
 			case "right":
@@ -320,7 +320,7 @@ func (e *engine) layoutImage(n *htmlparse.Node, st *style, x, w float64) {
 	e.applyMargin()
 	e.ensureSpace(ih)
 	ix := x + st.margin[3]
-	switch st.align {
+	switch st.physAlign() {
 	case "center":
 		ix += (avail - iw) / 2
 	case "right":

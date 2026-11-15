@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 // Form controls are printed the way they look: inputs, checkboxes, radio
@@ -99,6 +99,7 @@ func (e *engine) formNode(n *htmlparse.Node, st *style) (*htmlparse.Node, *style
 	fn := &htmlparse.Node{Type: htmlparse.ElementNode, Tag: "#" + n.Tag, Attrs: n.Attrs, Parent: n.Parent,
 		Children: []*htmlparse.Node{{Type: htmlparse.TextNode, Text: text}}}
 	e.formNodes[n] = fn
+	e.formOrig[fn] = n
 	e.styles[fn] = &cs
 	return fn, &cs
 }

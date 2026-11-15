@@ -153,8 +153,8 @@ func ReadCoverage(r io.ReaderAt, index int) (*Coverage, error) {
 // Has reports whether the face maps r to a glyph.
 func (c *Coverage) Has(r rune) bool { return c.c.lookup(r) != 0 }
 
-// DecodeWOFF converts a WOFF 1.0 file to a plain sfnt font. (WOFF2 needs
-// Brotli, which the standard library does not provide.)
+// DecodeWOFF converts a WOFF 1.0 file to a plain sfnt font (DecodeWOFF2 handles
+// WOFF2).
 func DecodeWOFF(data []byte) ([]byte, error) {
 	if len(data) < 44 || string(data[:4]) != "wOFF" {
 		return nil, errors.New("ttf: not a WOFF file")

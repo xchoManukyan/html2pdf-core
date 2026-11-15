@@ -93,7 +93,8 @@ func (n *Node) TextContent() string {
 }
 
 var voidElements = set("area", "base", "br", "col", "embed", "hr", "img", "input",
-	"link", "meta", "param", "source", "track", "wbr", "keygen")
+	"link", "meta", "param", "source", "track", "wbr", "keygen",
+	"barcode") // mPDF's <barcode code="..." type="..."> has no content
 
 var rawTextElements = set("script", "style", "textarea", "title", "xmp", "noscript")
 

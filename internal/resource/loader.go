@@ -381,6 +381,8 @@ func typeByExt(p string) string {
 		return "image/webp"
 	case ".ttf", ".otf":
 		return "font/ttf"
+	case ".woff2":
+		return "font/woff2"
 	case ".woff":
 		return "font/woff"
 	case ".html", ".htm":

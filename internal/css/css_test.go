@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 var a4 = Env{Width: 510, Height: 756}

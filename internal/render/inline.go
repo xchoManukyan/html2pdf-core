@@ -3,7 +3,7 @@ package render
 import (
 	"math"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // Atomic inline boxes (inline-block, inline-flex, inline-table, inline

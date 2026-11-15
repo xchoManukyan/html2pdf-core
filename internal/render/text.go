@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/fonts"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/fonts"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 // chainFont is one font of a fallback chain, with synthesis flags for
@@ -146,6 +146,10 @@ func (c *fontChain) segments(s string) []textSeg {
 	cur := -1
 	var sb strings.Builder
 	for _, r := range s {
+		if (r == 0x200C || r == 0x200D) && cur >= 0 && c.fonts[cur].f.IsTrueType() {
+			sb.WriteRune(r) // joiners steer Indic and Arabic shaping in the current font
+			continue
+		}
 		if ignorable(r) {
 			continue
 		}

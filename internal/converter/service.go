@@ -14,9 +14,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
-	"github.com/xchoManukyan/html2pdf/converter/internal/render"
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/render"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
 )
 
 // MaxInputSize is the largest HTML document accepted (10 MB).
@@ -65,6 +65,15 @@ type Request struct {
 	DenyPrint     bool
 	DenyCopy      bool
 	DenyModify    bool
+	// Encryption is the method when the PDF is protected: "aes-256"
+	// (default), "aes-128" or "rc4-128".
+	Encryption string
+	// PDFA writes a PDF/A-2b archival document (no encryption allowed).
+	PDFA bool
+	// Forms makes inputs, selects and textareas fillable PDF form fields.
+	Forms bool
+	// Sign signs the PDF (certificate, key, reason, location; nil: unsigned).
+	Sign *pdf.Signature
 }
 
 // Result is the converted document.
@@ -156,6 +165,19 @@ func Convert(req Request) (*Result, error) {
 		BaseURL:       baseURL,
 		Info:          info,
 	}
+	protected := req.UserPassword != "" || req.OwnerPassword != "" || req.DenyPrint || req.DenyCopy || req.DenyModify
+	if req.PDFA && protected {
+		return nil, errors.New("PDF/A documents cannot be encrypted: remove the passwords and permissions, or turn off PDF/A")
+	}
+	if req.PDFA && req.Forms {
+		return nil, errors.New("fillable forms cannot be combined with PDF/A here: turn one of them off")
+	}
+	opts.PDFA = req.PDFA
+	opts.Forms = req.Forms
+	opts.Sign = req.Sign
+	if _, ok := pdf.MethodOf(req.Encryption); !ok {
+		return nil, fmt.Errorf("unknown encryption %q: use aes-256, aes-128 or rc4-128", req.Encryption)
+	}
 	if req.UserPassword != "" || req.OwnerPassword != "" || req.DenyPrint || req.DenyCopy || req.DenyModify {
 		opts.Encrypt = &pdf.Encryption{
 			UserPassword:  req.UserPassword,
@@ -164,6 +186,7 @@ func Convert(req Request) (*Result, error) {
 			AllowCopy:     !req.DenyCopy,
 			AllowModify:   !req.DenyModify,
 			AllowAnnotate: !req.DenyModify,
+			Method:        req.Encryption,
 		}
 	}
 

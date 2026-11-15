@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // Selectors Level 4 subset: type, universal, #id, .class, [attr] with all

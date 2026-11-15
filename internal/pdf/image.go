@@ -10,7 +10,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 
-	_ "github.com/xchoManukyan/html2pdf/converter/internal/webp" // WebP (lossy, lossless, alpha)
+	_ "github.com/xchoManukyan/html2pdf-core/internal/webp" // WebP (lossy, lossless, alpha)
 )
 
 // Image is a raster image embedded in the document.
@@ -41,7 +41,9 @@ func (d *Document) AddImage(data []byte) (*Image, error) {
 	}
 	img := &Image{id: len(d.images) + 1, Width: cfg.Width, Height: cfg.Height, bpc: 8}
 
-	if format == "jpeg" {
+	// JPEGs are embedded as they are, except CMYK ones in PDF/A: an sRGB
+	// document may not contain DeviceCMYK, so they are converted below
+	if format == "jpeg" && !(d.PDFA && cfg.ColorModel == color.CMYKModel) {
 		img.filter = "/DCTDecode"
 		img.data = data
 		switch cfg.ColorModel {

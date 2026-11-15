@@ -1,0 +1,6 @@
+/dist/
+/html2pdf
+/*.exe
+/*.pdf
+/.idea/
+/.vscode/

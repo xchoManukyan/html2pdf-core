@@ -5,11 +5,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/bootstrap"
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
-	"github.com/xchoManukyan/html2pdf/converter/internal/tailwind"
+	"github.com/xchoManukyan/html2pdf-core/internal/bootstrap"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/tailwind"
 )
 
 type fetchFunc func(abs string) ([]byte, string, error)

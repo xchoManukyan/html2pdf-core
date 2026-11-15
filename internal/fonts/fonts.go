@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/ttf"
+	"github.com/xchoManukyan/html2pdf-core/internal/ttf"
 )
 
 // Face is one font face: a file on disk (Path, Index) or in-memory data
@@ -292,6 +292,11 @@ func Expand(family string) []string {
 // lack (covering Armenian, Georgian, Cyrillic, Greek, Hebrew, symbols, CJK).
 var FallbackFamilies = []string{
 	"Arial", "Segoe UI", "Sylfaen", "DejaVu Sans", "Noto Sans", "Noto Sans Armenian",
-	"Liberation Sans", "Segoe UI Symbol", "Segoe UI Emoji", "Arial Unicode MS", "Nirmala UI",
+	"Liberation Sans", "Segoe UI Symbol", "Segoe UI Emoji",
+	// Indic: fonts with current OpenType rules before the older all-in-one fonts
+	"Nirmala UI", "Noto Sans Devanagari", "Noto Sans Bengali", "Noto Sans Tamil", "Noto Sans Gurmukhi",
+	"Noto Sans Gujarati", "Noto Sans Telugu", "Noto Sans Kannada", "Noto Sans Malayalam", "Noto Sans Oriya",
+	"Kohinoor Devanagari", "Kohinoor Bangla", "Tamil Sangam MN", "Lohit Devanagari", "Lohit Bengali", "Lohit Tamil",
+	"Noto Sans Arabic", "Arial Unicode MS",
 	"Microsoft YaHei", "Yu Gothic", "Malgun Gothic", "SimSun", "MS Gothic",
 }

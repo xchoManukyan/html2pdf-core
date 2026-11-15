@@ -1,0 +1,39 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 tests the converter, builds it for every
+# platform and publishes a GitHub release with the binaries, SHA256SUMS and
+# checksums.json. The PHP and Node packages then pin that version (see
+# CONTRIBUTING.md).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: '1.27.3'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Version numbers match the tag
+        run: sh scripts/check-versions.sh "${GITHUB_REF_NAME#v}"
+      - name: Tests
+        run: go test ./...
+      - name: Build all binaries
+        run: sh scripts/build.sh
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sh scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag \
+            dist/html2pdf-* dist/SHA256SUMS dist/checksums.json THIRD_PARTY_NOTICES.md

@@ -1,7 +1,7 @@
 package render
 
 import (
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // floatBox is the margin box of a placed float, in page coordinates.

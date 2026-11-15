@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // Decl is one "property: value" pair.

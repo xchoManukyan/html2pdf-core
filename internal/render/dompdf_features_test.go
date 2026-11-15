@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
 )
 
 func pngBytes() []byte {
@@ -121,7 +121,7 @@ func TestLinksMetadataAndEncryption(t *testing.T) {
 		t.Error("<meta> author/keywords should be written to the document info")
 	}
 	enc, _ := convertWith(t, `<p>Secret text</p>`, Options{Encrypt: &pdf.Encryption{UserPassword: "pw", AllowPrint: true}})
-	if !strings.Contains(enc, "/Filter /Standard /V 2 /R 3 /Length 128") || !strings.Contains(enc, "/Encrypt ") {
+	if !strings.Contains(enc, "/Filter /Standard /V 5 /R 6 /Length 256") || !strings.Contains(enc, "/Encrypt ") {
 		t.Error("encryption dictionary missing")
 	}
 	if strings.Contains(enc, "Secret") {

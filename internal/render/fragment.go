@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // Fragmentation controls (CSS Fragmentation Level 3): break-inside: avoid,

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // CSS Grid Layout (Level 1, without subgrid): explicit and implicit
@@ -133,13 +133,70 @@ type trackSize struct {
 	fr         float64 // flex factor when maxK == tFr
 }
 
-// trackList is a parsed track listing; an auto-fill/auto-fit repeat is
-// kept apart and expanded once the available space is known.
+// trackList is a parsed track listing with its line names; an
+// auto-fill/auto-fit repeat is kept apart and expanded once the available
+// space is known.
 type trackList struct {
-	before, after []trackSize
-	autoRepeat    []trackSize
+	before, after lineSeq
+	autoRepeat    lineSeq
 	autoFit       bool
 	hasAuto       bool
+	subgrid       bool // grid-template-*: subgrid (tracks come from the parent grid)
+}
+
+// lineSeq is a run of tracks with the names of the lines around them:
+// names[i] names the line before tracks[i]; names[len(tracks)] the last line.
+type lineSeq struct {
+	tracks []trackSize
+	names  [][]string
+}
+
+func newSeq() lineSeq { return lineSeq{names: make([][]string, 1)} }
+
+func (s *lineSeq) addNames(n []string) {
+	s.names[len(s.names)-1] = append(s.names[len(s.names)-1], n...)
+}
+
+func (s *lineSeq) addTrack(t trackSize) {
+	s.tracks = append(s.tracks, t)
+	s.names = append(s.names, nil)
+}
+
+// appendSeq appends o; the line where they meet gets both sets of names.
+func (s *lineSeq) appendSeq(o lineSeq) {
+	s.addNames(o.names[0])
+	s.tracks = append(s.tracks, o.tracks...)
+	for _, n := range o.names[1:] {
+		s.names = append(s.names, append([]string(nil), n...))
+	}
+}
+
+// trackTokens splits a track list at spaces outside (...) and [...], so
+// "[a b] repeat(2, [c] 1fr)" gives "[a b]" and "repeat(2, [c] 1fr)".
+func trackTokens(v string) []string {
+	var out []string
+	depth, start := 0, -1
+	for i, r := range v {
+		switch {
+		case r == '(' || r == '[':
+			depth++
+		case r == ')' || r == ']':
+			depth--
+		case (r == ' ' || r == '\t' || r == '\n') && depth == 0:
+			if start >= 0 {
+				out = append(out, v[start:i])
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, v[start:])
+	}
+	return out
 }
 
 func parseTrackSize(tok string) trackSize {
@@ -181,99 +238,76 @@ func parseTrackSize(tok string) trackSize {
 }
 
 func parseTrackList(v string) trackList {
-	var tl trackList
+	tl := trackList{before: newSeq(), after: newSeq(), autoRepeat: newSeq()}
+	v = strings.TrimSpace(v)
 	if v == "" || v == "none" {
 		return tl
 	}
-	var expand func(tokens []string) []trackSize
-	expand = func(tokens []string) []trackSize {
-		var out []trackSize
+	var parse func(tokens []string, top bool) lineSeq
+	parse = func(tokens []string, top bool) lineSeq {
+		seq := newSeq()
 		for _, tok := range tokens {
-			if strings.HasPrefix(tok, "[") { // line names are not used
-				continue
-			}
-			if strings.HasPrefix(tok, "repeat(") && strings.HasSuffix(tok, ")") {
+			switch {
+			case strings.HasPrefix(tok, "["):
+				seq.addNames(strings.Fields(strings.Trim(tok, "[]")))
+			case tok == "subgrid" && top:
+				tl.subgrid = true
+			case strings.HasPrefix(tok, "repeat(") && strings.HasSuffix(tok, ")"):
 				count, list, ok := strings.Cut(tok[7:len(tok)-1], ",")
 				if !ok {
 					continue
 				}
-				inner := expand(splitValue(stripBrackets(list)))
+				inner := parse(trackTokens(strings.TrimSpace(list)), false)
 				switch c := strings.TrimSpace(count); c {
 				case "auto-fill", "auto-fit":
-					tl.hasAuto = true
-					tl.autoFit = c == "auto-fit"
-					tl.autoRepeat = inner
-					return out // tracks after an auto repeat go to "after"
+					if top && !tl.hasAuto {
+						tl.hasAuto, tl.autoFit, tl.autoRepeat = true, c == "auto-fit", inner
+						tl.before = seq // tracks after the auto repeat go to "after"
+						seq = newSeq()
+					}
 				default:
 					n, err := strconv.Atoi(c)
 					if err != nil || n < 1 {
 						continue
 					}
 					for i := 0; i < min(n, 1000); i++ {
-						out = append(out, inner...)
+						seq.appendSeq(inner)
 					}
 				}
-				continue
+			default:
+				seq.addTrack(parseTrackSize(tok))
 			}
-			out = append(out, parseTrackSize(tok))
 		}
-		return out
+		return seq
 	}
-	tokens := splitValue(stripBrackets(v))
-	tl.before = expand(tokens)
+	seq := parse(trackTokens(v), true)
 	if tl.hasAuto {
-		// collect what follows the auto repeat
-		after := false
-		var rest []string
-		for _, tok := range tokens {
-			if after {
-				rest = append(rest, tok)
-			} else if strings.HasPrefix(tok, "repeat(") && (strings.Contains(tok, "auto-fill") || strings.Contains(tok, "auto-fit")) {
-				after = true
-			}
-		}
-		saved := tl
-		tl.after = expand(rest)
-		tl.before, tl.autoRepeat, tl.autoFit, tl.hasAuto = saved.before, saved.autoRepeat, saved.autoFit, true
+		tl.after = seq
+	} else {
+		tl.before = seq
 	}
 	return tl
 }
 
-// stripBrackets removes [line names] so they do not disturb splitting.
-func stripBrackets(v string) string {
-	var sb strings.Builder
-	depth := 0
-	for _, r := range v {
-		switch {
-		case r == '[':
-			depth++
-		case r == ']':
-			depth--
-			sb.WriteByte(' ')
-		case depth == 0:
-			sb.WriteRune(r)
-		}
-	}
-	return sb.String()
-}
-
 // expandTracks resolves an auto-fill/auto-fit repetition for the
-// available size.
-func (e *engine) expandTracks(tl trackList, st *style, avail, gap float64, definite bool) ([]trackSize, int, int) {
-	tracks := append([]trackSize(nil), tl.before...)
-	repStart, repCount := len(tracks), 0
-	if tl.hasAuto && len(tl.autoRepeat) > 0 {
+// available size. It returns the tracks, the names of their lines, and
+// where the repeated tracks start and how many there are.
+func (e *engine) expandTracks(tl trackList, st *style, avail, gap float64, definite bool) ([]trackSize, [][]string, int, int) {
+	seq := newSeq()
+	seq.appendSeq(tl.before)
+	repStart, repCount := len(seq.tracks), 0
+	if tl.hasAuto && len(tl.autoRepeat.tracks) > 0 {
 		reps := 1
 		if definite {
 			fixed := 0.0
-			for _, t := range append(append([]trackSize(nil), tl.before...), tl.after...) {
+			for _, t := range append(append([]trackSize(nil), tl.before.tracks...), tl.after.tracks...) {
 				if v, ok := e.fixedSize(t, st, avail); ok {
 					fixed += v
 				}
 				fixed += gap
 			}
 			one := 0.0
-			for _, t := range tl.autoRepeat {
+			for _, t := range tl.autoRepeat.tracks {
 				v, ok := e.fixedSize(t, st, avail)
 				if !ok {
 					v = 0
@@ -286,12 +320,23 @@ func (e *engine) expandTracks(tl trackList, st *style, avail, gap float64, defin
 		}
 		reps = min(reps, 500)
 		for i := 0; i < reps; i++ {
-			tracks = append(tracks, tl.autoRepeat...)
+			seq.appendSeq(tl.autoRepeat)
 		}
-		repCount = reps * len(tl.autoRepeat)
+		repCount = reps * len(tl.autoRepeat.tracks)
 	}
-	tracks = append(tracks, tl.after...)
-	return tracks, repStart, repCount
+	seq.appendSeq(tl.after)
+	return seq.tracks, seq.names, repStart, repCount
+}
+
+// lineIndex maps line names to their 0-based line numbers.
+func lineIndex(names [][]string) map[string][]int {
+	idx := map[string][]int{}
+	for i, ns := range names {
+		for _, n := range ns {
+			idx[n] = append(idx[n], i)
+		}
+	}
+	return idx
 }
 
 // fixedSize returns a definite size of a track (its fixed max, else its
@@ -376,10 +421,25 @@ func parseAreas(rows []string) (map[string]area, int, int) {
 
 // resolveAxis turns start/end values into a 0-based start (-1 = auto) and
 // a span, for an axis with `explicit` tracks.
-func resolveAxis(startV, endV string, explicit int, areas map[string]area, rowAxis bool) (int, int) {
+func resolveAxis(startV, endV string, explicit int, areas map[string]area, rowAxis bool, names map[string][]int) (int, int) {
 	s, e := parseGridLine(startV), parseGridLine(endV)
 	lineIdx := func(l gridLine, isEnd bool) (int, bool) {
 		if l.name != "" {
+			// an explicitly named line: "name" is its first occurrence, "name 2" the
+			// second, "name -1" the last
+			if idx, ok := names[l.name]; ok {
+				k := l.line
+				if k == 0 {
+					k = 1
+				}
+				switch {
+				case k > 0 && k <= len(idx):
+					return idx[k-1], true
+				case k < 0 && -k <= len(idx):
+					return idx[len(idx)+k], true
+				}
+				return 0, false
+			}
 			name := strings.TrimSuffix(strings.TrimSuffix(l.name, "-start"), "-end")
 			if a, ok := areas[name]; ok {
 				switch {
@@ -405,8 +465,8 @@ func resolveAxis(startV, endV string, explicit int, areas map[string]area, rowAx
 	}
 	si, sOK := lineIdx(s, false)
 	ei, eOK := lineIdx(e, true)
-	if s.name != "" && e.auto {
-		// a named start with an auto end spans the whole area
+	if _, explicitName := names[s.name]; s.name != "" && e.auto && !explicitName {
+		// an area name as the start with an auto end spans the whole area
 		if ei2, ok := lineIdx(gridLine{name: s.name}, true); ok {
 			ei, eOK = ei2, true
 		}
@@ -428,7 +488,7 @@ func resolveAxis(startV, endV string, explicit int, areas map[string]area, rowAx
 
 // placeItems runs the grid placement algorithm. It returns the items with
 // positions and the final row and column counts.
-func (e *engine) placeItems(items []*flexItem, st *style, explicitRows, explicitCols int, areas map[string]area) ([]*gridItem, int, int) {
+func (e *engine) placeItems(items []*flexItem, st *style, explicitRows, explicitCols int, areas map[string]area, rowNames, colNames map[string][]int) ([]*gridItem, int, int) {
 	flow := strings.Fields(st.gridAutoFlow)
 	columnFlow, dense := false, false
 	for _, f := range flow {
@@ -442,8 +502,8 @@ func (e *engine) placeItems(items []*flexItem, st *style, explicitRows, explicit
 	var gis []*gridItem
 	rows, cols := explicitRows, explicitCols
 	for _, it := range items {
-		r, rs := resolveAxis(it.st.gridRowStart, it.st.gridRowEnd, explicitRows, areas, true)
-		c, cs := resolveAxis(it.st.gridColStart, it.st.gridColEnd, explicitCols, areas, false)
+		r, rs := resolveAxis(it.st.gridRowStart, it.st.gridRowEnd, explicitRows, areas, true, rowNames)
+		c, cs := resolveAxis(it.st.gridColStart, it.st.gridColEnd, explicitCols, areas, false, colNames)
 		gi := &gridItem{flexItem: it, row: r, col: c, rowSpan: min(rs, 1000), colSpan: min(cs, 1000)}
 		gis = append(gis, gi)
 		if r >= 0 {
@@ -824,13 +884,53 @@ func (e *engine) setupGrid(n *htmlparse.Node, st *style, w float64, definiteW bo
 	rowGap := e.gap(st.rowGapExpr, st, w)
 	ctl := parseTrackList(st.gridCols)
 	rtl := parseTrackList(st.gridRows)
-	cols, colRepStart, colRepCount := e.expandTracks(ctl, st, w, colGap, definiteW)
-	rows, _, _ := e.expandTracks(rtl, st, e.contentHeight(st), rowGap, e.contentHeight(st) > 0)
+	// a subgrid has exactly the tracks it spans in its parent grid
+	span := e.subgridSpan[n]
+	subRows, subCols := rtl.subgrid && span[0] > 0, ctl.subgrid && span[1] > 0
+	autoTracks := func(k int) ([]trackSize, [][]string) {
+		t := make([]trackSize, k)
+		for i := range t {
+			t[i] = trackSize{minK: tAuto, maxK: tAuto}
+		}
+		return t, make([][]string, k+1)
+	}
+	var cols, rows []trackSize
+	var colNames, rowNames [][]string
+	colRepStart, colRepCount := 0, 0
+	if subCols {
+		cols, colNames = autoTracks(span[1])
+	} else {
+		cols, colNames, colRepStart, colRepCount = e.expandTracks(ctl, st, w, colGap, definiteW)
+	}
+	if subRows {
+		rows, rowNames = autoTracks(span[0])
+	} else {
+		rows, rowNames, _, _ = e.expandTracks(rtl, st, e.contentHeight(st), rowGap, e.contentHeight(st) > 0)
+	}
 	explicitCols, explicitRows := max(len(cols), areaCols), max(len(rows), areaRows)
-	gis, nRows, nCols := e.placeItems(items, st, explicitRows, explicitCols, areas)
+	gis, nRows, nCols := e.placeItems(items, st, explicitRows, explicitCols, areas, lineIndex(rowNames), lineIndex(colNames))
+	// a subgrid has no implicit tracks in its subgridded axes: keep items inside
+	clamp := func(start, length *int, k int) {
+		*start = min(*start, k-1)
+		*length = max(min(*length, k-*start), 1)
+	}
+	for _, gi := range gis {
+		if subCols {
+			clamp(&gi.col, &gi.colSpan, span[1])
+		}
+		if subRows {
+			clamp(&gi.row, &gi.rowSpan, span[0])
+		}
+	}
+	if subCols {
+		nCols = span[1]
+	}
+	if subRows {
+		nRows = span[0]
+	}
 
-	autoCol := parseTrackList(st.gridAutoCols).before
-	autoRow := parseTrackList(st.gridAutoRows).before
+	autoCol := parseTrackList(st.gridAutoCols).before.tracks
+	autoRow := parseTrackList(st.gridAutoRows).before.tracks
 	if len(autoCol) == 0 {
 		autoCol = []trackSize{{minK: tAuto, maxK: tAuto}}
 	}
@@ -885,15 +985,26 @@ func (e *engine) layoutGrid(n *htmlparse.Node, st *style, x, w float64) {
 		return
 	}
 	e.applyMargin()
+	sub := e.subgridTracks[n] // set when n is a subgrid: its tracks come from the parent
+	subs := e.findSubgrids(g, w)
 
 	// columns
-	_, colW := e.sizeTracks(g.cols, g.items, st, w, true, g.colGap,
-		func(gi *gridItem) (int, int) { return gi.col, gi.colSpan },
-		func(gi *gridItem) (float64, float64) { return e.measureBlock(gi.node, gi.st) },
-		st.justify == "normal" || st.justify == "stretch")
+	var colW []float64
 	colGap := g.colGap
+	if sub != nil && sub.cols != nil {
+		colW, colGap = append([]float64(nil), sub.cols...), sub.colGap
+	} else {
+		sizing, extra := columnSizingItems(g, subs)
+		_, colW = e.sizeTracks(g.cols, sizing, st, w, true, g.colGap,
+			func(gi *gridItem) (int, int) { return gi.col, gi.colSpan },
+			func(gi *gridItem) (float64, float64) {
+				lo, hi := e.measureBlock(gi.node, gi.st)
+				return lo + extra[gi], hi + extra[gi]
+			},
+			st.justify == "normal" || st.justify == "stretch")
+	}
 	// auto-fit: empty repeated columns collapse
-	if g.autoFitCol && g.colRep[1] > 0 {
+	if g.autoFitCol && g.colRep[1] > 0 && (sub == nil || sub.cols == nil) {
 		used := map[int]bool{}
 		for _, gi := range g.items {
 			for c := gi.col; c < gi.col+gi.colSpan; c++ {
@@ -927,26 +1038,45 @@ func (e *engine) layoutGrid(n *htmlparse.Node, st *style, x, w float64) {
 		return colX[end-1] + colW[end-1] - colX[gi.col]
 	}
 
+	e.setSubgridColumns(subs, colW, colGap)
+
 	// rows: contributions are item heights at their resolved widths
 	heights := map[*gridItem]float64{}
 	itemW := map[*gridItem]float64{}
 	definiteH := e.contentHeight(st)
-	_, rowH := e.sizeTracks(g.rows, g.items, st, definiteH, definiteH > 0, g.rowGap,
-		func(gi *gridItem) (int, int) { return gi.row, gi.rowSpan },
-		func(gi *gridItem) (float64, float64) {
-			bw := e.gridItemWidth(gi, st, areaW(gi))
-			itemW[gi] = bw
-			h, _ := e.measureBox(gi.node, gi.st, bw)
-			heights[gi] = h
-			h += gi.st.margin[0] + gi.st.margin[2]
-			return h, h
-		}, st.alignContent == "stretch" || st.alignContent == "normal")
+	measure := func(gi *gridItem) float64 {
+		bw := e.gridItemWidth(gi, st, areaW(gi))
+		itemW[gi] = bw
+		h, _ := e.measureBox(gi.node, gi.st, bw)
+		heights[gi] = h
+		return h + gi.st.margin[0] + gi.st.margin[2]
+	}
+	var rowH []float64
+	baseRowGap := g.rowGap
+	if sub != nil && sub.rows != nil {
+		rowH, baseRowGap = append([]float64(nil), sub.rows...), sub.rowGap
+		for _, gi := range g.items {
+			measure(gi)
+		}
+	} else {
+		sizing, subHeights := e.rowSizingItems(g, subs, areaW)
+		_, rowH = e.sizeTracks(g.rows, sizing, st, definiteH, definiteH > 0, g.rowGap,
+			func(gi *gridItem) (int, int) { return gi.row, gi.rowSpan },
+			func(gi *gridItem) (float64, float64) {
+				if h, ok := subHeights[gi]; ok {
+					return h, h
+				}
+				h := measure(gi)
+				return h, h
+			}, st.alignContent == "stretch" || st.alignContent == "normal")
+	}
 	nr := len(rowH)
 	offY, betweenY := 0.0, 0.0
-	if definiteH > 0 {
-		offY, betweenY = contentDistribution(st.alignContent, definiteH-trackSum(rowH, 0, nr, g.rowGap), nr)
+	if definiteH > 0 && (sub == nil || sub.rows == nil) {
+		offY, betweenY = contentDistribution(st.alignContent, definiteH-trackSum(rowH, 0, nr, baseRowGap), nr)
 	}
-	rowGap := g.rowGap + betweenY
+	rowGap := baseRowGap + betweenY
+	e.setSubgridRows(subs, rowH, rowGap)
 
 	// pagination by groups of rows tied together by spanning items
 	start := e.y
@@ -1008,6 +1138,9 @@ func (e *engine) layoutGrid(n *htmlparse.Node, st *style, x, w float64) {
 				ix += freeX / 2
 			case js == "end":
 				ix += freeX
+			}
+			if st.direction == "rtl" { // column 1 is on the right: mirror the item in the grid
+				ix = x + w - (ix - x) - bw
 			}
 			// vertical alignment
 			al := s.alignSelf

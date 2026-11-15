@@ -72,9 +72,7 @@ func DecodeEntities(s string) string {
 			i++
 			continue
 		}
-		if r != 0xAD { // soft hyphen is dropped
-			b.WriteRune(r)
-		}
+		b.WriteRune(r) // a soft hyphen (U+00AD) is kept: it marks where a word may break
 		i += semi + 1
 	}
 	return b.String()

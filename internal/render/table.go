@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 // Tables (CSS 2.1 chapter 17): a cell grid with colspan/rowspan, the
@@ -380,11 +380,15 @@ type tableGeom struct {
 	tx, tw float64   // border box of the table
 	colX   []float64 // left edge of each column's cells; colX[cols] is the right edge
 	colW   []float64
+	rtl    bool // columns run right to left: colX/colW are in visual order
 }
 
 func (g *tableGeom) cellBox(t *tableModel, c *tableCell) (float64, float64) {
-	end := min(c.col+c.colspan, t.cols)
-	return g.colX[c.col], g.colX[end-1] + g.colW[end-1] - g.colX[c.col]
+	start, end := c.col, min(c.col+c.colspan, t.cols)
+	if g.rtl { // logical column c is visual column cols-1-c
+		start, end = t.cols-end, t.cols-c.col
+	}
+	return g.colX[start], g.colX[end-1] + g.colW[end-1] - g.colX[start]
 }
 
 func (e *engine) tableGeometry(t *tableModel, st *style, x, w float64) tableGeom {
@@ -440,8 +444,17 @@ func (e *engine) tableGeometry(t *tableModel, st *style, x, w float64) tableGeom
 		tx += max(avail-tw, 0) / 2
 	case st.autoMargin[3]:
 		tx += max(avail-tw, 0)
+	case st.direction == "rtl" && !st.autoMargin[1]:
+		tx += max(avail-tw, 0) // a narrow table starts at the right
 	}
-	g := tableGeom{tx: tx, tw: tw, colW: colW, colX: make([]float64, t.cols+1)}
+	g := tableGeom{tx: tx, tw: tw, colW: colW, colX: make([]float64, t.cols+1), rtl: st.direction == "rtl"}
+	if g.rtl {
+		colW = append([]float64(nil), colW...)
+		for i, j := 0, len(colW)-1; i < j; i, j = i+1, j-1 {
+			colW[i], colW[j] = colW[j], colW[i]
+		}
+		g.colW = colW
+	}
 	cx := tx + frameL
 	for i, cw := range colW {
 		g.colX[i] = cx

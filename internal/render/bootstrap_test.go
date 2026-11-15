@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/resource"
+	"github.com/xchoManukyan/html2pdf-core/internal/resource"
 )
 
 // Bootstrap support and the layout fixes it needed, checked against

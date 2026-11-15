@@ -1,12 +1,13 @@
 package render
 
 import (
+	"github.com/xchoManukyan/html2pdf-core/internal/bidi"
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 // userAgentCSS gives every element its browser-like default look
@@ -99,6 +100,9 @@ type style struct {
 	listType      string
 	noAppearance  bool // appearance: none (the page draws the control itself)
 	transform     string
+	hyphens       string // CSS hyphens: none, manual ("" = manual) or auto
+	direction     string // CSS direction: "ltr" ("" ) or "rtl" (inherited; also the dir attribute)
+	lang          string // language from the lang attribute (inherited)
 	link          string
 	lineHeight    float64 // multiple of font size; 0 = "normal"
 	ws            string  // white-space: normal, nowrap, pre, pre-wrap, pre-line
@@ -240,7 +244,7 @@ func (s *style) extrasH() float64 { return s.padding[1] + s.padding[3] + s.bw(1)
 func (s *style) extrasV() float64 { return s.padding[0] + s.padding[2] + s.bw(0) + s.bw(2) }
 
 func rootStyle() *style {
-	return &style{family: "serif", weight: 400, size: 12, align: "left", ws: "normal",
+	return &style{family: "serif", weight: 400, size: 12, align: "start", ws: "normal",
 		display: "block", visible: true, vars: map[string]string{}, alpha: 1, orphans: 2, widows: 2}
 }
 
@@ -285,7 +289,7 @@ func inheritFrom(parent *style) *style {
 	s := &style{
 		family: parent.family, weight: parent.weight, italic: parent.italic,
 		size: parent.size, color: parent.color, align: parent.align, valign: parent.valign,
-		listType: parent.listType, transform: parent.transform, link: parent.link,
+		listType: parent.listType, transform: parent.transform, link: parent.link, hyphens: parent.hyphens, lang: parent.lang, direction: parent.direction,
 		lineHeight: parent.lineHeight, ws: parent.ws, underline: parent.underline, strike: parent.strike,
 		letterSpacing: parent.letterSpacing, wordSpacing: parent.wordSpacing, textIndent: parent.textIndent,
 		visible: parent.visible, shift: parent.shift, vars: parent.vars, display: "inline",
@@ -313,6 +317,24 @@ func (e *engine) computeStyle(n *htmlparse.Node, parent *style) *style {
 	if n.Tag == "a" {
 		if href := n.Attr("href"); href != "" {
 			s.link = href
+		}
+	}
+	if n.HasAttr("lang") {
+		s.lang = n.Attr("lang") // lang="" means "unknown language"
+	} else if n.HasAttr("xml:lang") {
+		s.lang = n.Attr("xml:lang")
+	}
+	// the dir attribute sets direction (CSS can still override it)
+	switch strings.ToLower(strings.TrimSpace(n.Attr("dir"))) {
+	case "rtl":
+		s.direction = "rtl"
+	case "ltr":
+		s.direction = "ltr"
+	case "auto": // the direction of the first strong letter of the content
+		if rtl, ok := bidi.FirstStrong(n.TextContent()); ok && rtl {
+			s.direction = "rtl"
+		} else {
+			s.direction = "ltr"
 		}
 	}
 	e.applyCascade(s, parent, e.cascade(n, ""))
@@ -691,9 +713,11 @@ func (e *engine) applyDecl(s *style, d css.Decl, parent *style) {
 		s.family = raw
 	case "text-align":
 		switch v {
-		case "left", "start", "-webkit-left":
+		case "start", "end":
+			s.align = v // resolved against direction by physAlign
+		case "left", "-webkit-left":
 			s.align = "left"
-		case "right", "end", "-webkit-right":
+		case "right", "-webkit-right":
 			s.align = "right"
 		case "center", "-webkit-center":
 			s.align = "center"
@@ -732,6 +756,12 @@ func (e *engine) applyDecl(s *style, d css.Decl, parent *style) {
 		if strings.Contains(v, "line-through") {
 			s.strike = true
 		}
+	case "direction":
+		if v == "rtl" || v == "ltr" {
+			s.direction = v
+		}
+	case "hyphens", "-webkit-hyphens", "-ms-hyphens":
+		s.hyphens = strings.ToLower(strings.TrimSpace(v))
 	case "text-transform":
 		s.transform = v
 	case "text-indent":
@@ -1179,6 +1209,10 @@ func copyProp(dst, src *style, prop string) {
 		dst.lineHeight = src.lineHeight
 	case prop == "text-align":
 		dst.align = src.align
+	case prop == "direction":
+		dst.direction = src.direction
+	case prop == "hyphens":
+		dst.hyphens = src.hyphens
 	case prop == "text-transform":
 		dst.transform = src.transform
 	case prop == "text-indent":
@@ -1630,4 +1664,23 @@ func ancestor(n *htmlparse.Node, tag string) *htmlparse.Node {
 		}
 	}
 	return nil
+}
+
+// physAlign resolves text-align start/end against the direction: left,
+// right, center or justify.
+func (s *style) physAlign() string {
+	rtl := s.direction == "rtl"
+	switch s.align {
+	case "", "start":
+		if rtl {
+			return "right"
+		}
+		return "left"
+	case "end":
+		if rtl {
+			return "left"
+		}
+		return "right"
+	}
+	return s.align
 }

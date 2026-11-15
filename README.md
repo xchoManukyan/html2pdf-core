@@ -1,12 +1,31 @@
-# html2pdf converter
+# html2pdf core
 
-An HTML → PDF converter with a web upload page, written in Go using **only the
-standard library** (no third-party modules, no headless browser, no wkhtmltopdf).
+[![CI](https://github.com/xchoManukyan/html2pdf-core/actions/workflows/ci.yml/badge.svg)](https://github.com/xchoManukyan/html2pdf-core/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-This is the engine behind the [PHP package](../README.md). It also works on its own: as a command-line tool, as a
-web service (`-addr :8080`, used by the PHP package's `HttpTransport`), or with its built-in upload page. Prebuilt
-binaries for Linux, macOS and Windows are attached to every
-[release](https://github.com/xchoManukyan/html2pdf/releases).
+An HTML → PDF converter written in Go using **only the standard library** (no third-party modules, no headless
+browser, no wkhtmltopdf): flexbox and grid, Tailwind and Bootstrap, SVG, WebP, web fonts, right-to-left and Indic
+scripts, fillable forms, digital signatures, barcodes, PDF/A and AES-256 encryption.
+
+It is the engine of two packages, which download its release binaries and verify them against pinned checksums:
+
+| Package | Install |
+|---|---|
+| [PHP](https://github.com/xchoManukyan/html2pdf) | `composer require xchomanukyan/html2pdf` |
+| [Node.js](https://github.com/xchoManukyan/html2pdf-node) | `npm install @xchomanukyan/html2pdf` |
+
+It also works on its own: as a command-line tool, as a web service (`-addr :8080`), or with its built-in upload page.
+Prebuilt binaries for Linux, macOS and Windows (x64 and ARM64) are attached to every
+[release](https://github.com/xchoManukyan/html2pdf-core/releases), with `SHA256SUMS` and `checksums.json`. Builds
+are reproducible: `sh scripts/build.sh` with the toolchain pinned in `go.mod` produces the same bytes.
+
+## Install
+
+```bash
+go install github.com/xchoManukyan/html2pdf-core@latest   # installs the html2pdf-core command
+```
+
+or download a binary from the releases, or build one: `sh scripts/build.sh --host` (into `dist/`).
 
 ## Run
 
@@ -29,6 +48,13 @@ go run . -in samples/bundle/index.html            # relative CSS, images, fonts 
 go run . -in site.zip                              # a ZIP with the HTML and its assets
 go run . -in page.html -remote                     # also download http(s) resources
 go run . -in page.html -user-password secret -owner-password admin -no-copy -no-print
+go run . -in page.html -pdfa                       # PDF/A-2b for archiving (embedded fonts, XMP, sRGB)
+go run . -in samples/rtl.html                      # Arabic, Hebrew, Persian: right-to-left layout
+go run . -in samples/barcodes.html                 # <barcode> QR codes, Code 128, EAN-13 ...
+go run . -in samples/scripts.html                  # Hindi, Bengali, Tamil, Arabic shaped with the fonts' OpenType rules
+go run . -in samples/forms.html -forms             # inputs, checkboxes, selects become fillable PDF fields
+go run . -in page.html -sign-cert cert.pem -sign-key key.pem -sign-reason "Approved"   # digitally signed PDF
+go run . -sign-cert cert.pem -sign-key key.pem     # web server that signs on request (API field sign=true)
 go run . -allow-remote                             # web server: let users enable remote resources
 go run . -in site/html/page.html -root site         # page may load ../css, ../img (anything inside -root)
 go run . -in page.html -viewport 1280               # desktop layout (CSS width 1280px) scaled to the paper
@@ -36,12 +62,26 @@ go run . -in page.html -size 210x5000               # custom paper size in mm (w
 go run . -in page.html -css bootstrap5,tailwind     # apply these CSS libraries (default: detect them from the page)
 ```
 
-For programs (the PHP package uses this): `-in -` reads the document from standard input (`-root dir -doc
+For programs (the PHP and Node packages use this): `-in -` reads the document from standard input (`-root dir -doc
 pages/x.html` say where it is, for relative links), `-out -` writes the PDF to standard output, and `-json` prints a
 report (`ok`, `error`, `bytes`, `tookMs`, `cssLibs`, `missing`, `failures`; on standard error when the PDF goes to
 standard output). Exit code 1 on errors. Passwords can be given as `HTML2PDF_USER_PASSWORD` /
 `HTML2PDF_OWNER_PASSWORD` environment variables instead of flags, so they don't appear in the process list.
 `-version` prints the version.
+
+### Interface for the packages
+
+The PHP and Node packages depend on three things, which change only with a note in `CHANGELOG.md` (and, before 1.0,
+only in a minor version):
+
+- **Command line:** `-in - -out FILE -json -doc NAME [-root DIR]` and the option flags listed by `-h`.
+- **The `-json` report:** `{"ok", "error", "file", "bytes", "tookMs", "cssLibs": [{"lib", "source"}], "missing",
+  "failures": [{"ref", "reason"}], "version"}`.
+- **HTTP API:** `POST /api/convert` (multipart: `file` parts with matching `path` parts, `main`, and the option fields
+  `pageSize`, `orientation`, `margin`, `pageNumbers`, `viewport`, `cssLib`, `allowRemote`, `userPassword`,
+  `ownerPassword`, `denyPrint`, `denyCopy`, `denyModify`, `encryption`, `pdfa`, `forms`, `sign`, `signReason`,
+  `signLocation`, `signContact`). The answer is the PDF with the headers `X-Render-Time-Ms`, `X-CSS-Lib` and
+  `X-Missing-Details`, or a JSON `{"error"}` with status 400, 413 or 422 for documents that cannot be converted.
 
 ## Web interface
 
@@ -76,10 +116,14 @@ It answers with `application/pdf` (add `?inline=1` to display rather than downlo
 | `internal/bootstrap` | Bundled Bootstrap 5.3.9 and 4.6.2 CSS (MIT) for pages that link Bootstrap from a CDN |
 | `internal/tailwind` | Tailwind CSS v3 utility generator for pages that load Tailwind's browser script (no JavaScript is run) |
 | `internal/webp` | WebP decoder: VP8 (lossy), VP8L (lossless), ALPH alpha, VP8X/animation containers; registers with `image.Decode` |
-| `internal/ttf` | TrueType/OpenType (TrueType outlines) and TTC parser, glyph subsetter, WOFF 1.0 decoder |
+| `internal/ttf` | TrueType/OpenType (TrueType outlines) and TTC parser, glyph subsetter, WOFF 1.0 and WOFF2 decoders, OpenType layout (GSUB/GPOS) with Indic and Arabic shaping |
+| `internal/brotli` | Brotli decompressor (RFC 7932) for WOFF2, with the RFC's static dictionary |
+| `internal/bidi` | Unicode Bidirectional Algorithm and Arabic shaping |
+| `internal/barcode` | QR code, Code 128, EAN/UPC, Code 39 and Interleaved 2 of 5 encoders, drawn as SVG |
+| `internal/hyphen` | Liang hyphenation with the hyph-utf8 TeX patterns (76 language variants, loaded on first use) |
 | `internal/fonts` | Installed-font index, CSS font matching (family/weight/style/width), per-character fallback |
 | `internal/resource` | Resource loader: `data:` URIs, ZIP bundles, local files confined to a base folder (chroot), opt-in remote http(s) with SSRF protection, size limits and timeouts |
-| `internal/pdf` | PDF writer: embedded subset fonts (Type0/CIDFontType2 + ToUnicode), base-14 fallback, Flate, images, links |
+| `internal/pdf` | PDF writer: embedded subset fonts (Type0/CIDFontType2 + ToUnicode, ActualText for shaped text), base-14 fallback, Flate, images, links, form fields (AcroForm), CMS/PAdES signatures, AES/RC4 encryption, PDF/A-2b |
 
 ## Fonts
 
@@ -89,7 +133,7 @@ Only the glyphs actually used are embedded, so PDFs stay small. Any script the i
 works, including Armenian, Cyrillic, Greek, Georgian and CJK. When a font lacks a character, the next
 font in `font-family` is tried, then common fallback fonts, then every installed font. Missing bold or
 italic faces are synthesised. `@font-face` works with `data:` URIs (TTF, OTF with TrueType outlines,
-WOFF 1.0) and `local()`. The CSS default family is `serif` (Times New Roman), as in browsers.
+WOFF 1.0, WOFF2) and `local()`. The CSS default family is `serif` (Times New Roman), as in browsers.
 
 On a server without any fonts, the built-in PDF fonts (Helvetica/Courier, Western European only) are used.
 
@@ -210,24 +254,72 @@ On a server without any fonts, the built-in PDF fonts (Helvetica/Courier, Wester
   `content: url(logo.svg)`.
 - **Links and metadata:** `href="#id"` jumps to elements with that id or `<a name>`; `<meta name="author|description|
   keywords|generator">` and `<title>` fill the PDF properties.
-- **Password protection:** open password, owner password, and print / copy / modify permissions (PDF standard security
-  handler, 128-bit RC4, like dompdf's CPDF backend).
+- **Password protection:** open password, owner password, and print / copy / modify permissions. AES-256 by default
+  (PDF 2.0 standard security handler, revision 6); `-encryption aes-128` or `rc4-128` for very old readers.
 - **More images and controls:** BMP (1–32 bit), WebP (lossy, lossless, alpha, first frame of animations;
   decoded in pure Go, bit-exact with libwebp), `list-style-image`, and form controls printed as they look: text inputs
   (value or placeholder), passwords, checkboxes, radio buttons, selects, buttons, colour swatches.
 
-## Roadmap / not yet supported
+## Right-to-left and complex scripts, forms, signatures, barcodes, hyphenation, PDF/A
 
-Not supported in Grid: subgrid, masonry, named lines in placement. Approximations: shadow blur is built from stacked translucent layers (PDF has no blur filter),
-transparent gradient stops are blended towards white, `text-shadow` blur is drawn as a softer solid shadow.
-Out of scope: JavaScript, WOFF2 (needs Brotli), PHP-style inline scripts, and shaping of complex scripts
-(Arabic, Indic), whose letters render unjoined.
+- **Right-to-left text:** Hebrew, Arabic, Persian and Urdu, with the Unicode Bidirectional Algorithm (numbers, Latin
+  words and punctuation inside right-to-left sentences keep their order; brackets are mirrored) and Arabic shaping
+  (initial, medial, final and isolated letter forms, lam-alef ligatures) through the Unicode presentation forms that
+  common fonts contain, or with the font's own OpenType rules (below). `dir="rtl|ltr|auto"` and CSS `direction`
+  set the direction: text aligns to the right (`text-align: start/end` follow it), text-indent is on the right, flex
+  rows, grid columns and table columns run from right to left.
+- **Complex scripts:** an OpenType layout engine (GSUB types 1–7, GPOS single, pair, mark-to-base, mark-to-ligature,
+  mark-to-mark and contextual positioning, with lookup flags and GDEF classes) shapes Devanagari, Bengali, Gurmukhi,
+  Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam the way browsers do: syllables, conjuncts and half forms, reph,
+  pre-base and two-part vowel signs, and mark positioning. Arabic uses the font's joining forms, lam-alef and contextual
+  rules and places harakat, so fonts without presentation forms (Noto Sans Arabic and most web fonts) work too.
+  Shaped runs carry ActualText, so copying from the PDF gives the original characters in logical order. Installed
+  fonts with current OpenType rules (Nirmala UI, Noto) are preferred for these scripts.
+- **Fillable forms** (`-forms`, API field `forms`): inputs, passwords, checkboxes, radio groups, selects (drop-down
+  and list boxes, `multiple`), and textareas become AcroForm fields over the boxes the page draws, keeping value,
+  `checked`, `selected`, `readonly`/`disabled`, `required`, `maxlength`, `title` and the text colour, size and
+  alignment. Buttons stay printed. Field values use the standard Helvetica font, so non-Latin values show their
+  characters only once a viewer regenerates the field. Not combinable with PDF/A.
+- **Digital signatures** (`-sign-cert`, `-sign-key`, `-sign-reason`, `-sign-location`, `-sign-contact`,
+  `-sign-name`): a PAdES baseline B-B signature (CMS SignedData with SHA-256 and the signing-certificate-v2 attribute,
+  `ETSI.CAdES.detached`) over the whole file, with RSA or ECDSA keys in PEM (PKCS#8, PKCS#1 or SEC 1, unencrypted;
+  intermediate certificates in the certificate file are embedded). Can be combined with encryption and PDF/A. The web server
+  signs only when started with a certificate, and requests choose the reason, location and contact (`sign=true`,
+  `signReason`, `signLocation`, `signContact`); the key never leaves the server. Trusted timestamps (B-T) and visible
+  signature boxes are not added.
+- **Barcodes:** mPDF's element, `<barcode code="..." type="..." size="1" height="1" text="1" error="M"
+  disableborder="1">`, drawn as vectors: QR codes (all versions and error correction levels, UTF-8), Code 128 (with
+  automatic code sets), EAN-13, EAN-8, UPC-A, ISBN, ISSN, Code 39 (`C39+` with check character) and Interleaved 2 of 5
+  (`I25+`). CSS size, colour and alignment apply; an invalid code shows its error in place of the barcode.
+- **Hyphenation:** soft hyphens (`&shy;`) everywhere, and `hyphens: auto` with the TeX hyphenation patterns of the
+  hyph-utf8 project for 76 language variants (German, French, Spanish, Italian, Russian, Ukrainian, Polish, Dutch,
+  Armenian, Greek, Hindi, Tamil and many more; `de` is the 1996 spelling, `de-CH` Swiss German, `en-GB`/`en-AU`/... the
+  British patterns, `sr` the Serbo-Croatian Cyrillic ones). As in browsers, automatic hyphenation needs the `lang`
+  attribute. Words may also break after a hyphen they contain. Czech, Indonesian, Macedonian and Romanian patterns are
+  not included (GPL-only or unlicensed).
+- **PDF/A-2b** (`-pdfa`, API field `pdfa`): archival PDF with embedded fonts, XMP metadata matching the document
+  properties, an sRGB output intent with an embedded ICC profile, and CMYK JPEGs converted to RGB. Validated with veraPDF.
+  Every font must be embedded, so text that only the built-in PDF fonts could draw is an error; PDF/A cannot be encrypted.
+- **WOFF2 fonts** in `@font-face` (Brotli decompression and glyf/loca/hmtx reconstruction in pure Go).
+- **Grid:** named lines (`[full-start] 1fr [main-start]`, also in `repeat()`; `grid-column: main-start / main-end`,
+  `col 2`, `col -1`) and `subgrid` for columns and rows (a subgrid's items size the parent's tracks, so the sections of
+  sibling cards line up).
+
+## Not yet supported
+
+Grid: masonry. Text: scripts beyond Arabic, Hebrew and the nine Indic scripts (Sinhala, Khmer, Myanmar, Tibetan),
+Thai line breaking, vertical writing, Nastaliq-style cursive attachment; CFF-based (.otf) fonts are not embedded.
+Signatures: timestamps and visible signature boxes. Approximations: shadow blur is built from stacked translucent
+layers (PDF has no blur filter), transparent gradient stops are blended towards white, `text-shadow` blur is drawn as a
+softer solid shadow. Out of scope: JavaScript and PHP-style inline scripts.
 
 ## Tests
 
 ```bash
 go test ./...
 ```
+
+Release: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 A whole site can be checked too: every `.html` file below the folder is converted and must render (blank pages or
 errors fail; missing local files are reported, and fail with `HTML2PDF_STRICT=1`):

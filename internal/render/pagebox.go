@@ -3,8 +3,8 @@ package render
 import (
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
 )
 
 // @page margin boxes (CSS Paged Media): @top-left, @top-center,

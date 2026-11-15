@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/css"
-	"github.com/xchoManukyan/html2pdf/converter/internal/htmlparse"
-	"github.com/xchoManukyan/html2pdf/converter/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/css"
+	"github.com/xchoManukyan/html2pdf-core/internal/htmlparse"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
 )
 
 // SVG 1.1 / 2 static subset rendered to PDF vectors: shapes, paths (incl.
@@ -941,6 +941,9 @@ func (e *engine) drawSVG(p *pdf.Page, l pdf.Layer, doc *svgDoc, clip *pdf.Rect, 
 	r.out.WriteString(fmt.Sprintf("q %s %s %s %s re W n ", pdf.Num(cr.X), pdf.Num(H-cr.Y-cr.H), pdf.Num(cr.W), pdf.Num(cr.H)))
 	r.out.WriteString(mat{1, 0, 0, -1, 0, H}.ops())
 	st := defaultSVGState(doc.width, doc.height)
+	if cs, ok := e.styles[doc.root]; ok {
+		st.color = cs.color // inline <svg>: currentColor is the element's CSS color, as in browsers
+	}
 	r.viewport(doc.root, st, x, y, w, h)
 	r.out.WriteString("Q\n")
 	p.Raw(l, r.out.String())

@@ -19,9 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/xchoManukyan/html2pdf/converter/internal/converter"
-	"github.com/xchoManukyan/html2pdf/converter/internal/fonts"
-	"github.com/xchoManukyan/html2pdf/converter/internal/server"
+	"github.com/xchoManukyan/html2pdf-core/internal/converter"
+	"github.com/xchoManukyan/html2pdf-core/internal/fonts"
+	"github.com/xchoManukyan/html2pdf-core/internal/pdf"
+	"github.com/xchoManukyan/html2pdf-core/internal/server"
 )
 
 func main() {
@@ -42,10 +43,29 @@ func main() {
 	noCopy := flag.Bool("no-copy", false, "forbid copying text (encrypts the PDF)")
 	root := flag.String("root", "", "CLI: folder the document may load files from (default: its own folder); use it when pages reference ../css or ../img")
 	noModify := flag.Bool("no-modify", false, "forbid editing and annotating (encrypts the PDF)")
+	encMethod := flag.String("encryption", "aes-256", "encryption of protected PDFs: aes-256, aes-128 or rc4-128 (only for very old readers)")
+	pdfa := flag.Bool("pdfa", false, "write PDF/A-2b (archival): embedded fonts, XMP metadata, sRGB output intent; no encryption")
+	forms := flag.Bool("forms", false, "make inputs, checkboxes, radio buttons, selects and textareas fillable PDF form fields")
+	signCert := flag.String("sign-cert", "", "sign the PDF: PEM file with the signing certificate (and its chain)")
+	signKey := flag.String("sign-key", "", "sign the PDF: PEM file with the private key (RSA or ECDSA, unencrypted; default: the -sign-cert file)")
+	signReason := flag.String("sign-reason", "", "signature: reason shown by PDF readers")
+	signLocation := flag.String("sign-location", "", "signature: location")
+	signContact := flag.String("sign-contact", "", "signature: contact information")
+	signName := flag.String("sign-name", "", "signature: signer name (default: the certificate's common name)")
 	docName := flag.String("doc", "", "CLI with -in -: the document's path inside -root, for relative links (default document.html)")
 	jsonOut := flag.Bool("json", false, "CLI: print a JSON report (file, size, time, CSS libraries, missing resources, or the error) for programs")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	var signer *pdf.Signature
+	if *signCert != "" || *signKey != "" {
+		var err error
+		if signer, err = loadSigner(*signCert, *signKey); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		signer.Reason, signer.Location, signer.Contact, signer.Name = *signReason, *signLocation, *signContact, *signName
+	}
 
 	if *showVersion {
 		fmt.Println(version)
@@ -54,7 +74,7 @@ func main() {
 	if *in != "" {
 		req := converter.Request{
 			PageSize: *size, Landscape: *landscape, MarginMM: *margin, PageNumbers: *numbers, ViewportWidth: *viewportW, CSSLib: *cssLib,
-			AllowRemote: *remote, UserPassword: *userPW, OwnerPassword: *ownerPW, DenyPrint: *noPrint, DenyCopy: *noCopy, DenyModify: *noModify,
+			AllowRemote: *remote, UserPassword: *userPW, OwnerPassword: *ownerPW, DenyPrint: *noPrint, DenyCopy: *noCopy, DenyModify: *noModify, Encryption: *encMethod, PDFA: *pdfa, Forms: *forms, Sign: signer,
 		}
 		// passwords can also come from the environment, so they don't show
 		// up in the process list
@@ -72,7 +92,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           server.New(server.Config{AllowRemote: *allowRemote}),
+		Handler:           server.New(server.Config{AllowRemote: *allowRemote, Signer: signer}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      120 * time.Second,
@@ -91,4 +111,23 @@ func main() {
 	defer cancel()
 	srv.Shutdown(ctx)
 	log.Println("server stopped")
+}
+
+// loadSigner reads the signing certificate and key (both may be in one file).
+func loadSigner(certFile, keyFile string) (*pdf.Signature, error) {
+	if certFile == "" {
+		certFile = keyFile
+	}
+	if keyFile == "" {
+		keyFile = certFile
+	}
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("signing certificate: %w", err)
+	}
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("signing key: %w", err)
+	}
+	return pdf.ParseSigner(certPEM, keyPEM)
 }
