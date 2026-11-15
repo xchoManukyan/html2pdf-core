@@ -21,7 +21,7 @@ Layout changes should be compared with a browser rendering of the same HTML. `HT
 
 ## The packages built on the converter
 
-The [PHP](https://github.com/xchoManukyan/html2pdf) and [Node.js](https://github.com/xchoManukyan/html2pdf-node)
+The [PHP](https://github.com/xchoManukyan/html2pdf-php) and [Node.js](https://github.com/xchoManukyan/html2pdf-node)
 packages run the binary (command line with `-json`) or call the HTTP API. These interfaces are described in the README
 ("Interface for the packages"). Change them only compatibly, and mark changes **Interface** in `CHANGELOG.md`.
 

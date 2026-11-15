@@ -11,7 +11,7 @@ It is the engine of two packages, which download its release binaries and verify
 
 | Package | Install |
 |---|---|
-| [PHP](https://github.com/xchoManukyan/html2pdf) | `composer require xchomanukyan/html2pdf` |
+| [PHP](https://github.com/xchoManukyan/html2pdf-php) | `composer require xchomanukyan/html2pdf` |
 | [Node.js](https://github.com/xchoManukyan/html2pdf-node) | `npm install @xchomanukyan/html2pdf` |
 
 It also works on its own: as a command-line tool, as a web service (`-addr :8080`), or with its built-in upload page.
